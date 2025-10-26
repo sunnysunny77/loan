@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[222]:
 
 
 # Imports
@@ -20,7 +20,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score, roc_curve
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.utils import resample
 from sklearn.preprocessing import LabelEncoder
 
 # GPU
@@ -37,19 +36,19 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[2]:
+# In[223]:
 
 
 def load_datasets(base_path="./"):
 
     files = {
-        "train": "loan_data.csv",
+        "train": "cs-training.csv",
     }
 
     dfs = {}
     for key, filename in files.items():
         print(f"Loading {filename}...")
-        dfs[key] = pd.read_csv(base_path + filename)
+        dfs[key] = pd.read_csv(base_path + filename, index_col=0)
 
     return dfs
 
@@ -90,7 +89,7 @@ def check_and_drop_duplicates(df, target=None):
 
         return df_cleaned
     else:
-        print("No duplicate rows found.")
+        print("No duplicate rows found")
 
         if target is not None:
             return df, target
@@ -101,9 +100,9 @@ def drop_target_and_ids(df):
 
     df_copy = df.copy()
 
-    feature_cols_to_drop =["Loan_ID", "Loan_Status"];
+    feature_cols_to_drop =["SeriousDlqin2yrs"];
 
-    target = df_copy["Loan_Status"]
+    target = df_copy["SeriousDlqin2yrs"]
     df_raw_features = df_copy.drop(columns=feature_cols_to_drop)
 
     print(f"Returning raw features and target")
@@ -114,11 +113,42 @@ def engineer_features(df):
 
     df_engi = df.copy()
 
-    outliers_idx = df_engi['CoapplicantIncome'].nlargest(1).index
+    df_engi["TotalPastDue"] = df_engi["NumberOfTime30-59DaysPastDueNotWorse"] + \
+                             df_engi["NumberOfTimes90DaysLate"] + \
+                             df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
 
-    df_train_cleaned = df_engi.drop(index=outliers_idx)
+    df_engi['HasDelinquencyBinary'] = (df_engi['TotalPastDue'] > 0).astype(int)
 
-    print(f"Engineer features")
+    df_engi['MajorDelinquencyBinary'] = (df_engi['NumberOfTimes90DaysLate'] > 0).astype(int)
+
+    df_engi['HasMonthlyIncomeBinary'] = df_engi['MonthlyIncome'].notna().astype(int)
+
+    df_engi['MonthlyDebtAmount'] = df_engi['DebtRatio'] * df_engi['MonthlyIncome']
+
+    df_engi['AvailableCreditRatio'] = df_engi['NumberOfOpenCreditLinesAndLoans'] / \
+                                      df_engi['NumberRealEstateLoansOrLines']
+
+    df_engi['Log_MonthlyIncome'] = np.log1p(df_engi['MonthlyIncome'])
+
+    df_engi['UtilToAgeRatio'] = df_engi['RevolvingUtilizationOfUnsecuredLines'] / df_engi['age']
+
+    def credit_mix(row):
+        if row['NumberRealEstateLoansOrLines'] == 0 and row['NumberOfOpenCreditLinesAndLoans'] == 0:
+            return 'NoCredit'
+        elif row['NumberRealEstateLoansOrLines'] > 0 and row['NumberOfOpenCreditLinesAndLoans'] == 0:
+            return 'RealEstateOnly'
+        elif row['NumberRealEstateLoansOrLines'] == 0 and row['NumberOfOpenCreditLinesAndLoans'] > 0:
+            return 'OtherCreditOnly'
+        else:
+            return 'MixedCredit'
+
+    df_engi['CreditMix'] = df_engi.apply(credit_mix, axis=1)
+    df_engi['CreditMix'] = df_engi['CreditMix']
+
+    threshold = 0.8
+    df_engi['IsHighUtilizationBinary'] = (df_engi['RevolvingUtilizationOfUnsecuredLines'] > threshold).astype(int)
+
+    print("Engineered features")
 
     return df_engi
 
@@ -203,6 +233,7 @@ def impute_and_scale(df, threshold=1.0):
     std_scaler = None
 
     if numeric_cols:
+        df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
         num_imputer = SimpleImputer(strategy='median')
         df_copy[numeric_cols] = num_imputer.fit_transform(df_copy[numeric_cols])
 
@@ -275,7 +306,8 @@ def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imput
                 df_copy[col] = df_copy[col].apply(lambda x: x if x not in rare_cats else 'Other')
 
     numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
-    if numeric_cols:
+    if numeric_cols and num_imputer:
+        df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
         df_copy[numeric_cols] = num_imputer.transform(df_copy[numeric_cols])
 
         if robust_scaler:
@@ -292,14 +324,12 @@ def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imput
         df_copy[cat_cols] = cat_imputer.transform(df_copy[cat_cols])
 
     if selected_features:
-        X_transformed = df_copy.reindex(columns=selected_features, fill_value=0)
-
-        return X_transformed
+        df_copy = df_copy.reindex(columns=selected_features, fill_value=0)
 
     return df_copy
 
 
-# In[3]:
+# In[224]:
 
 
 # Load datasets
@@ -307,7 +337,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[225]:
 
 
 #summary
@@ -315,28 +345,43 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[5]:
+# In[226]:
 
 
 # Drop duplicates
-df_cleaned = check_and_drop_duplicates(dfs["train"])
+df_cleaned = check_and_drop_duplicates(df_train)
 
 
-# In[6]:
+# In[227]:
 
 
 # Select targets
 df_features, target, feature_cols_to_drop = drop_target_and_ids(df_cleaned)
 
 
-# In[7]:
+# In[228]:
 
 
 print(df_features.head(5))
 print(target.value_counts())
 
 
-# In[8]:
+# In[229]:
+
+
+# Drop outliers
+numeric_df = df_features.select_dtypes(include=['int64', 'float64'])
+plt.figure(figsize=(15, 6))
+sns.boxplot(data=numeric_df)
+plt.title("Boxplot for All Numeric Features")
+plt.xticks(rotation=45)
+plt.show()
+outliers_idx = df_features['MonthlyIncome'].nlargest(1).index
+df_features = df_features.drop(index=outliers_idx)
+target = target.drop(index=outliers_idx)
+
+
+# In[230]:
 
 
 # Split train/test
@@ -350,92 +395,81 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[9]:
+# In[231]:
 
 
-numeric_df = X_train.select_dtypes(include=['int64', 'float64'])
-
-plt.figure(figsize=(15, 6))
-sns.boxplot(data=numeric_df)
-plt.title("Boxplot for All Numeric Features")
-plt.xticks(rotation=45)
-plt.show()
+# Engineer_features
+df_engi = engineer_features(X_train)
 
 
-# In[10]:
-
-
-# Engineer features
-X_train_engi = engineer_features(X_train)
-X_val_engi = engineer_features(X_val)
-X_test_engi = engineer_features(X_test)
-
-
-# In[11]:
+# In[232]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(X_train_engi, threshold=0.3)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.3)
 
 
-# In[12]:
-
-
-# Drop correlated features here
-df_corr, corr_cols_to_drop = drop_correlated(df_drop, threshold=0.8)
-
-
-# In[13]:
+# In[233]:
 
 
 # Drop high card
-df_high, hc_cols_to_drop = drop_high_card_cols(df_corr, threshold=50)
+df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[14]:
+# In[234]:
+
+
+# Drop correlated features here
+df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=1.1)
+
+
+# In[235]:
 
 
 # Collapse rare categories on training data
-df_collapsed, rare_maps = collapse_rare_categories(df_high, min_freq=0.005)
+df_collapsed, rare_maps = collapse_rare_categories(df_corr, min_freq=0.005)
 
 
-# In[15]:
+# In[236]:
 
 
 # Impute and scale
-df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler = impute_and_scale(df_collapsed, threshold=1.0)
+df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed, threshold=1.0)
 
 
-# In[16]:
+# In[237]:
 
 
 # Random Forest feature selection
-df_selected, selected_features = select_features_rf(df_processed, y_train, threshold=0.02, top_n=30)
+df_selected, selected_features = select_features_rf(df_processed, y_train, threshold=0.0, top_n=30)
 
 
-# In[17]:
+# In[238]:
 
 
 # Process
-all_cols_to_drop = hm_cols_to_drop + hc_cols_to_drop + corr_cols_to_drop
-X_val = transform_val_test(X_val_engi, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
-X_test = transform_val_test(X_test_engi, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
+all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + corr_cols_to_drop + hc_cols_to_drop
+
+X_val = engineer_features(X_val)
+X_val = transform_val_test(X_val, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
+
+X_test = engineer_features(X_test)
+X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
 X_train = df_selected.copy()
 
 
-# In[18]:
+# In[239]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[19]:
+# In[240]:
 
 
 # Encode
 le = LabelEncoder()
-y_train_encoded = pd.Series(le.fit_transform(y_train), index=y_train.index)
 y_train = le.fit_transform(y_train)  
 y_val = le.transform(y_val)       
 y_test = le.transform(y_test)    
@@ -466,52 +500,19 @@ print("NaNs in val:", X_val.isna().sum().sum())
 print("NaNs in test:", X_test.isna().sum().sum())
 
 
-# In[20]:
-
-
-# Resample
-train_df = X_train.copy()
-train_df['target'] = y_train
-classes = train_df['target'].unique()
-class_dfs = {c: train_df[train_df['target'] == c] for c in classes}
-max_size = train_df['target'].value_counts().max()
-
-resampled_dfs = []
-for c, df in class_dfs.items():
-    if len(df) < max_size:
-        df_resampled = resample(df, replace=True, n_samples=max_size, random_state=42)
-    else:
-        df_resampled = df
-    resampled_dfs.append(df_resampled)
-
-train_balanced = pd.concat(resampled_dfs)
-train_balanced = train_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
-
-X_train_bal = train_balanced.drop('target', axis=1)
-y_train_bal = train_balanced['target']
-
-print("Before upsampling:")
-print(pd.Series(y_train).value_counts())
-print("After upsampling:")
-print(pd.Series(y_train_bal).value_counts())
-print("Number of features:", X_train_bal.shape[1])
-print("X_train_balanced shape:", y_train_bal.shape)
-print("y_train_balanced shape:", y_train_bal.shape)
-
-
-# In[21]:
+# In[241]:
 
 
 # Convert to tensors
-X_train_tensor = torch.tensor(X_train_bal.values, dtype=torch.float32)
-y_train_tensor = torch.tensor(y_train_bal, dtype=torch.long)
+X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.long)
 X_val_tensor = torch.tensor(X_val.values, dtype=torch.float32)
 y_val_tensor = torch.tensor(y_val, dtype=torch.long)
 X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
 y_test_tensor  = torch.tensor(y_test, dtype=torch.long)
 
 
-# In[22]:
+# In[242]:
 
 
 # DataLoaders
@@ -526,7 +527,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[23]:
+# In[243]:
 
 
 # Model
@@ -549,17 +550,36 @@ class NN(nn.Module):
         x = self.out(x)         
         return x.squeeze(1)
 
-num_input = X_train_bal.shape[1]  
+num_input = X_train.shape[1]  
 model = NN(num_input).to(device)
 
 print(model)
 sum(p.numel() for p in model.parameters())
 
 
-# In[24]:
+# In[244]:
 
 
-loss_fn = nn.BCEWithLogitsLoss() 
+# Loss
+class BinaryFocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, logits, targets):
+        bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+        pt = torch.exp(-bce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+        return focal_loss.mean()
+
+loss_fn = BinaryFocalLoss(alpha=0.93, gamma=2)
+
+
+# In[245]:
+
+
+# Train
 optimizer = optim.Adam(model.parameters(), lr=lr)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=5, factor=0.5)
 
@@ -616,7 +636,7 @@ model.load_state_dict(best_model_state)
 print(f"Best model (val_auc={best_auc:.4f}) restored")
 
 
-# In[25]:
+# In[246]:
 
 
 model.eval()
@@ -631,12 +651,14 @@ y_val_probs = np.array(y_val_probs)
 y_val_true = y_val 
 
 prec, rec, thresholds = precision_recall_curve(y_val_true, y_val_probs)
-denom = prec + rec
-f1 = np.zeros_like(denom)
+
+beta = 0.9
+beta_sq = beta**2
+denom = beta_sq * prec[:-1] + rec[:-1]
+fbeta = np.zeros_like(denom)
 mask = denom != 0
-f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
-best_thresh = thresholds[np.argmax(f1[:-1])]
-print("Best threshold from validation set for F1:", best_thresh)
+fbeta[mask] = (1 + beta_sq) * prec[:-1][mask] * rec[:-1][mask] / denom[mask]
+best_thresh = thresholds[np.argmax(fbeta)]
 
 y_test_probs = []
 with torch.no_grad():
@@ -656,6 +678,7 @@ cm = confusion_matrix(y_test, y_test_pred_opt)
 tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 
+print("Best threshold for F1:", best_thresh)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -672,34 +695,43 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[26]:
+# In[247]:
 
 
 # Data sets
-dtrain = xgb.DMatrix(X_train_bal, label=y_train_bal)
+dtrain = xgb.DMatrix(X_train, label=y_train)
 dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[27]:
+# In[248]:
 
 
 # Model
+neg_count = sum(y_train == 0)
+pos_count = sum(y_train == 1)
+scale_pos_weight = neg_count / pos_count
+print("scale_pos_weight:", scale_pos_weight)
+
 params = {
     "objective": "binary:logistic",
-    "eval_metric": "logloss",
-    "eta": 0.05,
-    "max_depth": 5,
+    "eval_metric": ["logloss", "auc"], 
+    "eta": 0.03,
+    "max_depth": 4,
+    "min_child_weight": 2, 
     "subsample": 0.8,
     "colsample_bytree": 0.8,
-    "lambda": 1.0,
+    "gamma": 0.1,             
+    "lambda": 1.5, 
+    "alpha": 0.3, 
     "seed": 42,
+    "scale_pos_weight": scale_pos_weight
 }
 
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[28]:
+# In[249]:
 
 
 # Train
@@ -713,18 +745,23 @@ model_b = xgb.train(
 )
 
 
-# In[29]:
+# In[250]:
 
 
 # Evaluation
 y_probs = model_b.predict(dtest) 
 
-prec, rec, thresholds = precision_recall_curve(y_test, y_probs) 
-denom = prec + rec
-f1 = np.zeros_like(denom)
+prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
+
+beta = 0.9
+beta_sq = beta**2
+denom = beta_sq * prec[:-1] + rec[:-1]
+fbeta = np.zeros_like(denom)
 mask = denom != 0
-f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
-best_thresh = thresholds[np.argmax(f1[:-1])]
+fbeta[mask] = (1 + beta_sq) * prec[:-1][mask] * rec[:-1][mask] / denom[mask]
+
+best_thresh = thresholds[np.argmax(fbeta)]
+
 y_pred_opt = (y_probs > best_thresh).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -735,7 +772,6 @@ tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 roc_auc = roc_auc_score(y_test, y_probs)
 
-print("Best threshold for F1:", best_thresh)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -760,4 +796,11 @@ plt.ylabel("True Positive Rate")
 plt.title("ROC Curve")
 plt.legend()
 plt.show()
+print("Best threshold for F1:", best_thresh)
+
+
+# In[ ]:
+
+
+
 
