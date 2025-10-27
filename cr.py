@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[222]:
+# In[52]:
 
 
 # Imports
@@ -17,7 +17,7 @@ import xgboost as xgb
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score, roc_curve
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
@@ -36,7 +36,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[223]:
+# In[53]:
 
 
 def load_datasets(base_path="./"):
@@ -75,26 +75,33 @@ def dataset_summary(df, show_counts=True):
 
     return summary
 
-def check_and_drop_duplicates(df, target=None):
+import pandas as pd
 
-    total_duplicates = df.duplicated().sum()
+def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=True):
 
+    df_cleaned = df.copy()
+    target_cleaned = None
+
+    total_duplicates = df_cleaned.duplicated().sum()
     if total_duplicates > 0:
-        df_cleaned = df.drop_duplicates()
-        print(f"Dropped {total_duplicates} duplicate rows. Remaining: {len(df_cleaned)}")
+        df_cleaned = df_cleaned.drop_duplicates(keep='first')
+        if show_info:
+            print(f"Dropped {total_duplicates} duplicate rows. Remaining: {len(df_cleaned)}")
 
-        if target is not None:
-            target_cleaned = target.loc[df_cleaned.index]
-            return df_cleaned, target_cleaned
+    if target is not None:
+        target_cleaned = pd.Series(target).reindex(df_cleaned.index)
 
-        return df_cleaned
-    else:
-        print("No duplicate rows found")
+        if drop_target_na:
+            mask = target_cleaned.notna()
+            dropped = len(target_cleaned) - mask.sum()
+            if dropped > 0 and show_info:
+                print(f"Dropped {dropped} rows with missing target values.")
+            df_cleaned = df_cleaned.loc[mask].reset_index(drop=True)
+            target_cleaned = target_cleaned.loc[mask].reset_index(drop=True)
+        else:
+            target_cleaned = target_cleaned.reset_index(drop=True)
 
-        if target is not None:
-            return df, target
-
-        return df
+    return (df_cleaned, target_cleaned) if target is not None else df_cleaned
 
 def drop_target_and_ids(df):
 
@@ -329,7 +336,7 @@ def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imput
     return df_copy
 
 
-# In[224]:
+# In[54]:
 
 
 # Load datasets
@@ -337,7 +344,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[225]:
+# In[55]:
 
 
 #summary
@@ -345,28 +352,21 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[226]:
-
-
-# Drop duplicates
-df_cleaned = check_and_drop_duplicates(df_train)
-
-
-# In[227]:
+# In[56]:
 
 
 # Select targets
-df_features, target, feature_cols_to_drop = drop_target_and_ids(df_cleaned)
+df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 
 
-# In[228]:
+# In[57]:
 
 
 print(df_features.head(5))
 print(target.value_counts())
 
 
-# In[229]:
+# In[58]:
 
 
 # Drop outliers
@@ -376,12 +376,12 @@ sns.boxplot(data=numeric_df)
 plt.title("Boxplot for All Numeric Features")
 plt.xticks(rotation=45)
 plt.show()
-outliers_idx = df_features['MonthlyIncome'].nlargest(1).index
+outliers_idx = df_features['MonthlyIncome'].nlargest(3).index
 df_features = df_features.drop(index=outliers_idx)
 target = target.drop(index=outliers_idx)
 
 
-# In[230]:
+# In[59]:
 
 
 # Split train/test
@@ -395,56 +395,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[231]:
+# In[60]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[232]:
+# In[61]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.3)
 
 
-# In[233]:
+# In[62]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[234]:
+# In[63]:
 
 
 # Drop correlated features here
-df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=1.1)
+df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=0.9999)
 
 
-# In[235]:
+# In[64]:
 
 
 # Collapse rare categories on training data
 df_collapsed, rare_maps = collapse_rare_categories(df_corr, min_freq=0.005)
 
 
-# In[236]:
+# In[65]:
 
 
 # Impute and scale
-df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed, threshold=1.0)
+df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[237]:
+# In[66]:
 
 
 # Random Forest feature selection
 df_selected, selected_features = select_features_rf(df_processed, y_train, threshold=0.0, top_n=30)
 
 
-# In[238]:
+# In[67]:
 
 
 # Process
@@ -458,14 +458,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[239]:
+# In[68]:
+
+
+# Drop duplicates
+X_train, y_train = check_and_drop_duplicates(X_train, y_train)
+
+
+# In[69]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[240]:
+# In[70]:
 
 
 # Encode
@@ -500,7 +507,7 @@ print("NaNs in val:", X_val.isna().sum().sum())
 print("NaNs in test:", X_test.isna().sum().sum())
 
 
-# In[241]:
+# In[71]:
 
 
 # Convert to tensors
@@ -512,7 +519,7 @@ X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
 y_test_tensor  = torch.tensor(y_test, dtype=torch.long)
 
 
-# In[242]:
+# In[72]:
 
 
 # DataLoaders
@@ -527,7 +534,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[243]:
+# In[73]:
 
 
 # Model
@@ -557,7 +564,7 @@ print(model)
 sum(p.numel() for p in model.parameters())
 
 
-# In[244]:
+# In[74]:
 
 
 # Loss
@@ -573,10 +580,10 @@ class BinaryFocalLoss(nn.Module):
         focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
         return focal_loss.mean()
 
-loss_fn = BinaryFocalLoss(alpha=0.93, gamma=2)
+loss_fn = BinaryFocalLoss(alpha=0.95, gamma=3)
 
 
-# In[245]:
+# In[75]:
 
 
 # Train
@@ -636,29 +643,30 @@ model.load_state_dict(best_model_state)
 print(f"Best model (val_auc={best_auc:.4f}) restored")
 
 
-# In[246]:
+# In[76]:
 
 
 model.eval()
 y_val_probs = []
+
 with torch.no_grad():
     for X_batch, _ in val_loader:
         X_batch = X_batch.to(device)
         outputs = model(X_batch)
         probs = torch.sigmoid(outputs)  
         y_val_probs.extend(probs.cpu().numpy())
+
 y_val_probs = np.array(y_val_probs)
 y_val_true = y_val 
-
 prec, rec, thresholds = precision_recall_curve(y_val_true, y_val_probs)
-
-beta = 0.9
-beta_sq = beta**2
-denom = beta_sq * prec[:-1] + rec[:-1]
-fbeta = np.zeros_like(denom)
+denom = prec + rec
+f1 = np.zeros_like(denom)
 mask = denom != 0
-fbeta[mask] = (1 + beta_sq) * prec[:-1][mask] * rec[:-1][mask] / denom[mask]
-best_thresh = thresholds[np.argmax(fbeta)]
+f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
+best_thresh = thresholds[np.argmax(f1[:-1])]
+
+alpha = - 0.0125
+adjusted_thresh = np.clip(best_thresh + alpha, 0, 1)
 
 y_test_probs = []
 with torch.no_grad():
@@ -668,7 +676,7 @@ with torch.no_grad():
         probs = torch.sigmoid(outputs)
         y_test_probs.extend(probs.cpu().numpy())
 y_test_probs = np.array(y_test_probs)
-y_test_pred_opt = (y_test_probs > best_thresh).astype(int)
+y_test_pred_opt = (y_test_probs > adjusted_thresh).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
 report = classification_report(y_test, y_test_pred_opt, target_names=target_names)
@@ -694,8 +702,17 @@ plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
+plt.plot(thresholds, f1[:-1])
+plt.axvline(best_thresh, color='r', linestyle='--', label=f"F1 max = {best_thresh:.3f}")
+plt.axvline(adjusted_thresh, color='g', linestyle='--', label=f"Adjusted = {adjusted_thresh:.3f}")
+plt.xlabel("Threshold")
+plt.ylabel("F1 Score")
+plt.legend()
+plt.title("F1 vs Threshold (Validation)")
+plt.show()
 
-# In[247]:
+
+# In[77]:
 
 
 # Data sets
@@ -704,7 +721,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[248]:
+# In[78]:
 
 
 # Model
@@ -718,7 +735,7 @@ params = {
     "eval_metric": ["logloss", "auc"], 
     "eta": 0.03,
     "max_depth": 4,
-    "min_child_weight": 2, 
+    "min_child_weight": 1, 
     "subsample": 0.8,
     "colsample_bytree": 0.8,
     "gamma": 0.1,             
@@ -731,7 +748,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[249]:
+# In[79]:
 
 
 # Train
@@ -745,24 +762,22 @@ model_b = xgb.train(
 )
 
 
-# In[250]:
+# In[80]:
 
 
 # Evaluation
 y_probs = model_b.predict(dtest) 
 
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-
-beta = 0.9
-beta_sq = beta**2
-denom = beta_sq * prec[:-1] + rec[:-1]
-fbeta = np.zeros_like(denom)
+denom = prec + rec
+f1 = np.zeros_like(denom)
 mask = denom != 0
-fbeta[mask] = (1 + beta_sq) * prec[:-1][mask] * rec[:-1][mask] / denom[mask]
+f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
+best_thresh = thresholds[np.argmax(f1[:-1])]
 
-best_thresh = thresholds[np.argmax(fbeta)]
-
-y_pred_opt = (y_probs > best_thresh).astype(int)
+alpha = - 0.0125  # positive = stricter, negative = looser
+adjusted_thresh = np.clip(best_thresh + alpha, 0, 1)
+y_pred_opt = (y_probs > adjusted_thresh).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
 report = classification_report(y_test, y_pred_opt, target_names=target_names)
@@ -772,6 +787,7 @@ tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 roc_auc = roc_auc_score(y_test, y_probs)
 
+print("Best threshold for F1:", best_thresh)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -787,16 +803,20 @@ plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
-fpr, tpr, _ = roc_curve(y_test, y_probs) 
-plt.figure(figsize=(6,5))
-plt.plot(fpr, tpr, label=f"ROC curve (AUC = {roc_auc:.3f})")
-plt.plot([0,1], [0,1], 'k--', label="Random")
-plt.xlabel("False Positive Rate")
-plt.ylabel("True Positive Rate")
-plt.title("ROC Curve")
+plt.plot(thresholds, f1[:-1])
+plt.axvline(best_thresh, color='r', linestyle='--', label=f"F1 max = {best_thresh:.3f}")
+plt.axvline(adjusted_thresh, color='g', linestyle='--', label=f"Adjusted = {adjusted_thresh:.3f}")
+plt.xlabel("Threshold")
+plt.ylabel("F1 Score")
 plt.legend()
+plt.title("F1 vs Threshold (Validation)")
 plt.show()
-print("Best threshold for F1:", best_thresh)
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:
