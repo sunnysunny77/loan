@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[29]:
 
 
 # Imports
@@ -20,6 +20,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_class_weight
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,7 +36,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[2]:
+# In[30]:
 
 
 def load_datasets(base_path="./"):
@@ -79,6 +80,7 @@ def drop_target_and_ids(df):
 def engineer_features(df):
 
     df_engi = df.copy()
+
     df_engi["TotalPastDue"] = (
         df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
         df_engi["NumberOfTimes90DaysLate"] +
@@ -90,10 +92,11 @@ def engineer_features(df):
     df_engi['MonthlyDebtAmount'] = df_engi['DebtRatio'] * df_engi['MonthlyIncome']
     df_engi['AvailableCreditRatio'] = (
         df_engi['NumberOfOpenCreditLinesAndLoans'] /
-        df_engi['NumberRealEstateLoansOrLines']
+        df_engi['NumberRealEstateLoansOrLines'].replace(0, np.nan)
     )
     df_engi['Log_MonthlyIncome'] = np.log1p(df_engi['MonthlyIncome'])
     df_engi['UtilToAgeRatio'] = df_engi['RevolvingUtilizationOfUnsecuredLines'] / df_engi['age']
+
     def credit_mix(row):
         if row['NumberRealEstateLoansOrLines'] == 0 and row['NumberOfOpenCreditLinesAndLoans'] == 0:
             return 'NoCredit'
@@ -103,12 +106,30 @@ def engineer_features(df):
             return 'OtherCreditOnly'
         else:
             return 'MixedCredit'
+
     df_engi['CreditMix'] = df_engi.apply(credit_mix, axis=1)
+
     threshold = 0.8
     df_engi['IsHighUtilizationBinary'] = (
         df_engi['RevolvingUtilizationOfUnsecuredLines'] > threshold
     ).astype(int)
-    print("Engineered features added")
+
+    df_engi['DebtRatioPerAge'] = df_engi['DebtRatio'] / df_engi['age'].replace(0, np.nan)
+    df_engi['MonthlyDebtPerIncome'] = df_engi['MonthlyDebtAmount'] / df_engi['MonthlyIncome'].replace(0, np.nan)
+    df_engi['PastDuePerCreditLine'] = df_engi['TotalPastDue'] / (
+        df_engi['NumberOfOpenCreditLinesAndLoans'] + df_engi['NumberRealEstateLoansOrLines']
+    ).replace(0, np.nan)
+    df_engi['UtilTimesDebtRatio'] = df_engi['RevolvingUtilizationOfUnsecuredLines'] * df_engi['DebtRatio']
+    df_engi['AgeTimesIncome'] = df_engi['age'] * df_engi['MonthlyIncome']
+
+    df_engi['age_capped'] = np.minimum(df_engi['age'], 100)
+    df_engi['AgeBin'] = pd.cut(
+        df_engi['age_capped'],
+        bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
+        labels=['<25', '25-35', '35-45', '45-55', '55-65', '65-75', '75-85', '85+'],
+        include_lowest=True
+    )
+    print("Engineered features with age bins")
     return df_engi
 
 def drop_high_missing_cols(df, threshold=0.3):
@@ -168,7 +189,7 @@ def collapse_rare_categories(df, threshold=0.005):
         freqs = df_copy[col].value_counts(normalize=True)
         rare_cats = freqs[freqs < threshold].index
         if len(rare_cats) > 0:
-            df_copy[col] = df_copy[col].replace(rare_cats, 'Other')
+            df_copy[col] = df_copy[col].astype('object').replace(rare_cats, 'Other')
             rare_maps[col] = set(rare_cats)
             print(f"Collapsed {len(rare_cats)} rare categories in column '{col}'")
             print(f"Categories dropped: {list(rare_cats)}")
@@ -176,6 +197,7 @@ def collapse_rare_categories(df, threshold=0.005):
         print("No rare categories collapsed")
         rare_maps = None
     return df_copy, rare_maps
+
 
 def impute_and_scale(df, threshold=1.0):
 
@@ -330,7 +352,7 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
         return df_cleaned
 
 
-# In[3]:
+# In[31]:
 
 
 # Load datasets
@@ -338,7 +360,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[32]:
 
 
 #summary
@@ -346,7 +368,7 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[5]:
+# In[33]:
 
 
 # Outlier Handling
@@ -360,7 +382,6 @@ plt.show()
 print(df_train['age'].describe())
 
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
-df_train['age'] = df_train['age'].clip(lower=21, upper=100)
 
 print(df_train['age'].describe())
 
@@ -375,7 +396,7 @@ plt.xticks(rotation=45)
 plt.show()
 
 
-# In[6]:
+# In[34]:
 
 
 # Select targets
@@ -383,7 +404,7 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[7]:
+# In[35]:
 
 
 # Split train/test
@@ -397,56 +418,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[8]:
+# In[36]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[9]:
+# In[37]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.3)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.5)
 
 
-# In[10]:
+# In[38]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[11]:
+# In[39]:
 
 
 # Drop correlated features here
 df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=1)
 
 
-# In[12]:
+# In[40]:
 
 
 # Collapse rare categories on training data
-df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.013)
+df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.02)
 
 
-# In[13]:
+# In[41]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[14]:
+# In[42]:
 
 
-# Random Forest feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=55, top_n=30)
+# feature selection
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=50, top_n=30)
 
 
-# In[15]:
+# In[43]:
 
 
 # Process
@@ -460,21 +481,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[16]:
+# In[44]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[17]:
+# In[45]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[18]:
+# In[46]:
 
 
 # Encode
@@ -509,7 +530,7 @@ print("NaNs in val:", X_val.isna().sum().sum())
 print("NaNs in test:", X_test.isna().sum().sum())
 
 
-# In[19]:
+# In[47]:
 
 
 # Convert to tensors
@@ -519,9 +540,14 @@ X_val_tensor = torch.tensor(X_val.values, dtype=torch.float32)
 y_val_tensor = torch.tensor(y_val, dtype=torch.long)
 X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
 y_test_tensor  = torch.tensor(y_test, dtype=torch.long)
+classes = np.unique(y_train)
+class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
+class_weight_dict = dict(zip(classes, class_weights))
+weights_tensor = torch.tensor([class_weight_dict[int(c)] for c in y_train], dtype=torch.float32)
+print("Class weights:", class_weight_dict)
 
 
-# In[20]:
+# In[48]:
 
 
 # DataLoaders
@@ -536,7 +562,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[21]:
+# In[49]:
 
 
 # Model
@@ -566,31 +592,35 @@ print(model)
 sum(p.numel() for p in model.parameters())
 
 
-# In[22]:
+# In[50]:
 
 
 # Loss
-class BinaryFocalLoss(nn.Module):
+class WeightedBinaryFocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
 
-    def forward(self, logits, targets):
+    def forward(self, logits, targets, weights=None):
         bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
         pt = torch.exp(-bce_loss)
         focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+        if weights is not None:
+            focal_loss = focal_loss * weights  
         return focal_loss.mean()
 
-loss_fn = BinaryFocalLoss(alpha=0.95, gamma=3)
+alpha = class_weights[1] / (class_weights[0] + class_weights[1])
+loss_fn = WeightedBinaryFocalLoss(alpha=alpha, gamma=3)
 
 
-# In[23]:
+# In[51]:
 
 
 # Train
 optimizer = optim.Adam(model.parameters(), lr=lr)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=5, factor=0.5)
+weights_tensor = weights_tensor.to(device)
 
 best_model_state = None
 best_auc = 0.0
@@ -645,7 +675,7 @@ model.load_state_dict(best_model_state)
 print(f"Best model (val_auc={best_auc:.4f}) restored")
 
 
-# In[24]:
+# In[52]:
 
 
 model.eval()
@@ -667,7 +697,7 @@ mask = denom != 0
 f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
 best_thresh = thresholds[np.argmax(f1[:-1])]
 
-alpha = - 0.0125
+alpha = - 0.019 # adjusted for default
 adjusted_thresh = np.clip(best_thresh + alpha, 0, 1)
 
 y_test_probs = []
@@ -704,17 +734,8 @@ plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
-plt.plot(thresholds, f1[:-1])
-plt.axvline(best_thresh, color='r', linestyle='--', label=f"F1 max = {best_thresh:.3f}")
-plt.axvline(adjusted_thresh, color='g', linestyle='--', label=f"Adjusted = {adjusted_thresh:.3f}")
-plt.xlabel("Threshold")
-plt.ylabel("F1 Score")
-plt.legend()
-plt.title("F1 vs Threshold (Validation)")
-plt.show()
 
-
-# In[25]:
+# In[53]:
 
 
 # Data sets
@@ -723,7 +744,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[26]:
+# In[54]:
 
 
 # Model
@@ -750,7 +771,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[27]:
+# In[55]:
 
 
 # Train
@@ -764,7 +785,7 @@ model_b = xgb.train(
 )
 
 
-# In[28]:
+# In[56]:
 
 
 # Evaluation
@@ -777,7 +798,7 @@ mask = denom != 0
 f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
 best_thresh = thresholds[np.argmax(f1[:-1])]
 
-alpha = - 0.0125  # positive = stricter, negative = looser
+alpha = - 0.099 # adjusted for default
 adjusted_thresh = np.clip(best_thresh + alpha, 0, 1)
 y_pred_opt = (y_probs > adjusted_thresh).astype(int)
 
