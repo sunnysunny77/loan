@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[52]:
+# In[1]:
 
 
 # Imports
@@ -18,7 +18,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 
@@ -36,109 +35,65 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[53]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
 
-    files = {
-        "train": "cs-training.csv",
-    }
-
+    files = {"train": "cs-training.csv"}
     dfs = {}
     for key, filename in files.items():
         print(f"Loading {filename}...")
         dfs[key] = pd.read_csv(base_path + filename, index_col=0)
-
+        print(f"Loaded {filename} with {len(dfs[key].columns)} columns")
     return dfs
 
 def dataset_summary(df, show_counts=True):
 
     total_rows = len(df)
     total_duplicates = df.duplicated().sum()
-
     summary = pd.DataFrame({
         "dtype": df.dtypes,
         "non_null_count": df.notna().sum(),
         "missing_count": df.isna().sum(),
         "missing_%": (df.isna().mean() * 100).round(2),
         "unique_count": df.nunique(),
-        "duplicates_in_dataset": total_duplicates 
+        "duplicates_in_dataset": total_duplicates
     })
-
     print(f"Dataset shape: {df.shape}")
     if show_counts:
         print(f"Total rows: {total_rows}")
         print(f"Total duplicate rows: {total_duplicates}")
-
     summary = summary.sort_values(by="missing_%", ascending=False)
-
     return summary
-
-import pandas as pd
-
-def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=True):
-
-    df_cleaned = df.copy()
-    target_cleaned = None
-
-    total_duplicates = df_cleaned.duplicated().sum()
-    if total_duplicates > 0:
-        df_cleaned = df_cleaned.drop_duplicates(keep='first')
-        if show_info:
-            print(f"Dropped {total_duplicates} duplicate rows. Remaining: {len(df_cleaned)}")
-
-    if target is not None:
-        target_cleaned = pd.Series(target).reindex(df_cleaned.index)
-
-        if drop_target_na:
-            mask = target_cleaned.notna()
-            dropped = len(target_cleaned) - mask.sum()
-            if dropped > 0 and show_info:
-                print(f"Dropped {dropped} rows with missing target values.")
-            df_cleaned = df_cleaned.loc[mask].reset_index(drop=True)
-            target_cleaned = target_cleaned.loc[mask].reset_index(drop=True)
-        else:
-            target_cleaned = target_cleaned.reset_index(drop=True)
-
-    return (df_cleaned, target_cleaned) if target is not None else df_cleaned
 
 def drop_target_and_ids(df):
 
     df_copy = df.copy()
-
-    feature_cols_to_drop =["SeriousDlqin2yrs"];
-
+    feature_cols_to_drop = ["SeriousDlqin2yrs"]
     target = df_copy["SeriousDlqin2yrs"]
     df_raw_features = df_copy.drop(columns=feature_cols_to_drop)
-
-    print(f"Returning raw features and target")
-
+    print(f"Dropped target column: {feature_cols_to_drop}")
     return df_raw_features, target, feature_cols_to_drop
 
 def engineer_features(df):
 
     df_engi = df.copy()
-
-    df_engi["TotalPastDue"] = df_engi["NumberOfTime30-59DaysPastDueNotWorse"] + \
-                             df_engi["NumberOfTimes90DaysLate"] + \
-                             df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
-
+    df_engi["TotalPastDue"] = (
+        df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
+        df_engi["NumberOfTimes90DaysLate"] +
+        df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
+    )
     df_engi['HasDelinquencyBinary'] = (df_engi['TotalPastDue'] > 0).astype(int)
-
     df_engi['MajorDelinquencyBinary'] = (df_engi['NumberOfTimes90DaysLate'] > 0).astype(int)
-
     df_engi['HasMonthlyIncomeBinary'] = df_engi['MonthlyIncome'].notna().astype(int)
-
     df_engi['MonthlyDebtAmount'] = df_engi['DebtRatio'] * df_engi['MonthlyIncome']
-
-    df_engi['AvailableCreditRatio'] = df_engi['NumberOfOpenCreditLinesAndLoans'] / \
-                                      df_engi['NumberRealEstateLoansOrLines']
-
+    df_engi['AvailableCreditRatio'] = (
+        df_engi['NumberOfOpenCreditLinesAndLoans'] /
+        df_engi['NumberRealEstateLoansOrLines']
+    )
     df_engi['Log_MonthlyIncome'] = np.log1p(df_engi['MonthlyIncome'])
-
     df_engi['UtilToAgeRatio'] = df_engi['RevolvingUtilizationOfUnsecuredLines'] / df_engi['age']
-
     def credit_mix(row):
         if row['NumberRealEstateLoansOrLines'] == 0 and row['NumberOfOpenCreditLinesAndLoans'] == 0:
             return 'NoCredit'
@@ -148,156 +103,168 @@ def engineer_features(df):
             return 'OtherCreditOnly'
         else:
             return 'MixedCredit'
-
     df_engi['CreditMix'] = df_engi.apply(credit_mix, axis=1)
-    df_engi['CreditMix'] = df_engi['CreditMix']
-
     threshold = 0.8
-    df_engi['IsHighUtilizationBinary'] = (df_engi['RevolvingUtilizationOfUnsecuredLines'] > threshold).astype(int)
-
-    print("Engineered features")
-
+    df_engi['IsHighUtilizationBinary'] = (
+        df_engi['RevolvingUtilizationOfUnsecuredLines'] > threshold
+    ).astype(int)
+    print("Engineered features added")
     return df_engi
 
 def drop_high_missing_cols(df, threshold=0.3):
 
     missing_frac = df.isna().mean()
-
     hm_cols_to_drop = missing_frac[missing_frac > threshold].index.tolist()
-    df_drop = df.drop(columns=hm_cols_to_drop)
-
-    print(f"Dropping {len(hm_cols_to_drop)} columns at missing threshold >{threshold*100:.0f}%")
-
+    if hm_cols_to_drop:
+        df_drop = df.drop(columns=hm_cols_to_drop)
+        print(f"Dropped {len(hm_cols_to_drop)} columns with missing >{threshold*100:.0f}%")
+        print(f"Columns dropped: {hm_cols_to_drop}")
+    else:
+        df_drop = df.copy()
+        print("No columns dropped for missing threshold")
     return df_drop, hm_cols_to_drop
 
 def drop_high_card_cols(df, threshold=50):
 
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-
     hc_cols_to_drop = [col for col in cat_cols if df[col].nunique() > threshold]
-    df_high = df.drop(columns=hc_cols_to_drop, errors='ignore')
-
-    print(f"Dropping {len(hc_cols_to_drop)} high-cardinality columns (> {threshold} unique values)")
-
+    if hc_cols_to_drop:
+        df_high = df.drop(columns=hc_cols_to_drop, errors='ignore')
+        print(f"Dropped {len(hc_cols_to_drop)} high-cardinality columns (> {threshold} unique)")
+        print(f"Columns dropped: {hc_cols_to_drop}")
+    else:
+        df_high = df.copy()
+        print("No high-cardinality columns dropped")
     return df_high, hc_cols_to_drop
 
-def drop_correlated(df, threshold=0.95, plot=True):
+def drop_correlated(df, threshold=0.95):
 
     df_temp = df.copy()
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
-
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
-
     corr_matrix = df_temp.corr().abs()
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     corr_cols_to_drop = [column for column in upper.columns if any(upper[column] > threshold)]
-
-    df_corr = df.drop(columns=corr_cols_to_drop)
-
-    print(f"Dropping {len(corr_cols_to_drop)} highly correlated features")
-
-    if plot:
-        plt.figure(figsize=(12, 10))
-        sns.heatmap(corr_matrix, cmap='coolwarm', center=0, annot=False, linewidths=0.5)
-        plt.title("Feature Correlation Matrix")
-        plt.show()
-
+    if corr_cols_to_drop:
+        df_corr = df.drop(columns=corr_cols_to_drop)
+        print(f"Dropped {len(corr_cols_to_drop)} highly correlated columns")
+        print(f"Columns dropped: {corr_cols_to_drop}")
+    else:
+        df_corr = df.copy()
+        print("No highly correlated features dropped")
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(corr_matrix, cmap='coolwarm', center=0, annot=False, linewidths=0.5)
+    plt.title("Feature Correlation Matrix")
+    plt.show()
     return df_corr, corr_cols_to_drop
 
-def collapse_rare_categories(df, min_freq=0.005):
+def collapse_rare_categories(df, threshold=0.005):
 
     df_copy = df.copy()
-
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
     rare_maps = {}
-    changed = False
-
     for col in cat_cols:
         freqs = df_copy[col].value_counts(normalize=True)
-        rare_cats = freqs[freqs < min_freq].index
+        rare_cats = freqs[freqs < threshold].index
         if len(rare_cats) > 0:
             df_copy[col] = df_copy[col].replace(rare_cats, 'Other')
             rare_maps[col] = set(rare_cats)
-            changed = True
             print(f"Collapsed {len(rare_cats)} rare categories in column '{col}'")
-
-    if not changed:
-        print("Nothing to collapse")
-
-    return df_copy, (rare_maps if changed else None)
+            print(f"Categories dropped: {list(rare_cats)}")
+    if not rare_maps:
+        print("No rare categories collapsed")
+        rare_maps = None
+    return df_copy, rare_maps
 
 def impute_and_scale(df, threshold=1.0):
 
     df_copy = df.copy()
-
     numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
-
     num_imputer = None
     cat_imputer = None
     robust_scaler = None
     std_scaler = None
-
     if numeric_cols:
         df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
         num_imputer = SimpleImputer(strategy='median')
         df_copy[numeric_cols] = num_imputer.fit_transform(df_copy[numeric_cols])
-
     if cat_cols:
         cat_imputer = SimpleImputer(strategy='most_frequent')
         df_copy[cat_cols] = cat_imputer.fit_transform(df_copy[cat_cols])
-
     if numeric_cols:
-        skewness = df_copy[numeric_cols].skew().sort_values(ascending=False)
+        skewness = pd.DataFrame(df_copy[numeric_cols]).skew().sort_values(ascending=False)
         skewed_cols = skewness[abs(skewness) > threshold].index.tolist()
-
         if skewed_cols:
             robust_scaler = RobustScaler()
             df_copy[skewed_cols] = robust_scaler.fit_transform(df_copy[skewed_cols]).astype(np.float32)
-
         normal_cols = [c for c in numeric_cols if c not in skewed_cols]
         if normal_cols:
             std_scaler = StandardScaler()
             df_copy[normal_cols] = std_scaler.fit_transform(df_copy[normal_cols]).astype(np.float32)
-
     df_processed = df_copy.copy()
-
-    print(f"Imputed and scaled features")
-
+    print("Imputed and scaled features")
     return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
 
-def select_features_rf(df, target, n_estimators=500, max_depth=10, random_state=42, threshold=0.0, top_n=20):
+def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
 
     df_temp = df.copy()
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
-
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
-
-    rf = RandomForestClassifier(
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        random_state=random_state,
-        n_jobs=-1
+    X_train, X_val, y_train, y_val = train_test_split(
+        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
     )
-    rf.fit(df_temp, target)
-
-    importances = pd.Series(rf.feature_importances_, index=df_temp.columns).sort_values(ascending=False)
-    selected_features = importances[importances > threshold].index.tolist()
-    df_selected = df[selected_features].copy() 
-
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dval = xgb.DMatrix(X_val, label=y_val)
+    neg_count = sum(y_train == 0)
+    pos_count = sum(y_train == 1)
+    scale_pos_weight = neg_count / pos_count
+    params = {
+        "objective": "binary:logistic",
+        "eval_metric": ["logloss", "auc"],
+        "eta": 0.03,
+        "max_depth": 4,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "gamma": 0.1,
+        "lambda": 1.5,
+        "alpha": 0.3,
+        "seed": random_state,
+        "scale_pos_weight": scale_pos_weight
+    }
+    evals = [(dtrain, "train"), (dval, "validation")]
+    model = xgb.train(
+        params=params,
+        dtrain=dtrain,
+        num_boost_round=500,
+        evals=evals,
+        early_stopping_rounds=50,
+        verbose_eval=False
+    )
+    importance_dict = model.get_score(importance_type='gain')
+    importances = pd.Series(importance_dict).sort_values(ascending=False)
+    if threshold is None:
+        threshold_value = importances.quantile(0.75)
+        selected_features = importances[importances >= threshold_value].index.tolist()
+    else:
+        selected_features = importances[importances >= threshold].index.tolist()
+    dropped_features = [col for col in df.columns if col not in selected_features]
+    if selected_features:
+        df_selected = df[selected_features].copy()
+        print(f"Dropped {len(dropped_features)} features")
+        print(f"Columns dropped: {dropped_features}")
+    else:
+        df_selected = df.copy()
+        print("No features selected/dropped")
     top_features = importances.head(top_n)
     plt.figure(figsize=(10, 6))
     plt.barh(top_features.index[::-1], top_features.values[::-1], color='skyblue')
-    plt.xlabel("Feature Importance")
-    plt.title(f"Top {top_n} Feature Importances (Threshold={threshold})")
+    plt.xlabel("Feature Importance (gain)")
+    plt.title(f"Top {top_n} XGBoost Feature Importances")
     plt.tight_layout()
     plt.show()
-
-    print(f"Number of features before selection: {df.shape[1]}")
-    print(f"Selected {len(selected_features)} features (threshold={threshold})")
-
     return df_selected, selected_features
 
 def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler):
@@ -313,18 +280,19 @@ def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imput
                 df_copy[col] = df_copy[col].apply(lambda x: x if x not in rare_cats else 'Other')
 
     numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
+
     if numeric_cols and num_imputer:
         df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
         df_copy[numeric_cols] = num_imputer.transform(df_copy[numeric_cols])
 
-        if robust_scaler:
-            skewed_cols = robust_scaler.feature_names_in_
-            df_copy[skewed_cols] = robust_scaler.transform(df_copy[skewed_cols]).astype(np.float32)
+    if robust_scaler:
+        skewed_cols = robust_scaler.feature_names_in_
+        df_copy[skewed_cols] = robust_scaler.transform(df_copy[skewed_cols]).astype(np.float32)
 
-        if std_scaler:
-            normal_cols = [c for c in numeric_cols if robust_scaler is None or c not in robust_scaler.feature_names_in_]
-            if normal_cols:
-                df_copy[normal_cols] = std_scaler.transform(df_copy[normal_cols]).astype(np.float32)
+    if std_scaler:
+        normal_cols = [c for c in numeric_cols if robust_scaler is None or c not in robust_scaler.feature_names_in_]
+        if normal_cols:
+            df_copy[normal_cols] = std_scaler.transform(df_copy[normal_cols]).astype(np.float32)
 
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
     if cat_cols and cat_imputer:
@@ -335,8 +303,34 @@ def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imput
 
     return df_copy
 
+def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=True):
 
-# In[54]:
+    df_cleaned = df.copy()
+    target_cleaned = None
+
+    total_duplicates = df_cleaned.duplicated().sum()
+    if total_duplicates > 0:
+        df_cleaned = df_cleaned.drop_duplicates(keep='first')
+        if show_info:
+            print(f"Dropped {total_duplicates} duplicate rows. Remaining: {len(df_cleaned)}")
+
+    if target is not None:
+        target_cleaned = pd.Series(target).reindex(df_cleaned.index)
+        if drop_target_na:
+            mask = target_cleaned.notna()
+            dropped = len(target_cleaned) - mask.sum()
+            if dropped > 0 and show_info:
+                print(f"Dropped {dropped} rows with missing target values")
+            df_cleaned = df_cleaned.loc[mask].reset_index(drop=True)
+            target_cleaned = target_cleaned.loc[mask].reset_index(drop=True)
+        else:
+            target_cleaned = target_cleaned.reset_index(drop=True)
+        return df_cleaned, target_cleaned
+    else:
+        return df_cleaned
+
+
+# In[3]:
 
 
 # Load datasets
@@ -344,7 +338,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[55]:
+# In[4]:
 
 
 #summary
@@ -352,36 +346,44 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[56]:
+# In[5]:
 
 
-# Select targets
-df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
-
-
-# In[57]:
-
-
-print(df_features.head(5))
-print(target.value_counts())
-
-
-# In[58]:
-
-
-# Drop outliers
-numeric_df = df_features.select_dtypes(include=['int64', 'float64'])
+# Outlier Handling
+numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
 plt.figure(figsize=(15, 6))
 sns.boxplot(data=numeric_df)
 plt.title("Boxplot for All Numeric Features")
 plt.xticks(rotation=45)
 plt.show()
-outliers_idx = df_features['MonthlyIncome'].nlargest(3).index
-df_features = df_features.drop(index=outliers_idx)
-target = target.drop(index=outliers_idx)
+
+print(df_train['age'].describe())
+
+df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
+df_train['age'] = df_train['age'].clip(lower=21, upper=100)
+
+print(df_train['age'].describe())
+
+outliers_idx = df_train['MonthlyIncome'].nlargest(3).index
+df_train = df_train.drop(index=outliers_idx)
+
+numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
+plt.figure(figsize=(15, 6))
+sns.boxplot(data=numeric_df)
+plt.title("Boxplot for All Numeric Features After Outlier Removal")
+plt.xticks(rotation=45)
+plt.show()
 
 
-# In[59]:
+# In[6]:
+
+
+# Select targets
+df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
+print(target.value_counts())
+
+
+# In[7]:
 
 
 # Split train/test
@@ -395,56 +397,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[60]:
+# In[8]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[61]:
+# In[9]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.3)
 
 
-# In[62]:
+# In[10]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[63]:
+# In[11]:
 
 
 # Drop correlated features here
-df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=0.9999)
+df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=1)
 
 
-# In[64]:
+# In[12]:
 
 
 # Collapse rare categories on training data
-df_collapsed, rare_maps = collapse_rare_categories(df_corr, min_freq=0.005)
+df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.013)
 
 
-# In[65]:
+# In[13]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[66]:
+# In[14]:
 
 
 # Random Forest feature selection
-df_selected, selected_features = select_features_rf(df_processed, y_train, threshold=0.0, top_n=30)
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=55, top_n=30)
 
 
-# In[67]:
+# In[15]:
 
 
 # Process
@@ -458,21 +460,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[68]:
+# In[16]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[69]:
+# In[17]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[70]:
+# In[18]:
 
 
 # Encode
@@ -507,7 +509,7 @@ print("NaNs in val:", X_val.isna().sum().sum())
 print("NaNs in test:", X_test.isna().sum().sum())
 
 
-# In[71]:
+# In[19]:
 
 
 # Convert to tensors
@@ -519,7 +521,7 @@ X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
 y_test_tensor  = torch.tensor(y_test, dtype=torch.long)
 
 
-# In[72]:
+# In[20]:
 
 
 # DataLoaders
@@ -534,7 +536,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[73]:
+# In[21]:
 
 
 # Model
@@ -564,7 +566,7 @@ print(model)
 sum(p.numel() for p in model.parameters())
 
 
-# In[74]:
+# In[22]:
 
 
 # Loss
@@ -583,7 +585,7 @@ class BinaryFocalLoss(nn.Module):
 loss_fn = BinaryFocalLoss(alpha=0.95, gamma=3)
 
 
-# In[75]:
+# In[23]:
 
 
 # Train
@@ -643,7 +645,7 @@ model.load_state_dict(best_model_state)
 print(f"Best model (val_auc={best_auc:.4f}) restored")
 
 
-# In[76]:
+# In[24]:
 
 
 model.eval()
@@ -712,7 +714,7 @@ plt.title("F1 vs Threshold (Validation)")
 plt.show()
 
 
-# In[77]:
+# In[25]:
 
 
 # Data sets
@@ -721,7 +723,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[78]:
+# In[26]:
 
 
 # Model
@@ -748,7 +750,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[79]:
+# In[27]:
 
 
 # Train
@@ -762,7 +764,7 @@ model_b = xgb.train(
 )
 
 
-# In[80]:
+# In[28]:
 
 
 # Evaluation
@@ -811,12 +813,6 @@ plt.ylabel("F1 Score")
 plt.legend()
 plt.title("F1 vs Threshold (Validation)")
 plt.show()
-
-
-# In[ ]:
-
-
-
 
 
 # In[ ]:
