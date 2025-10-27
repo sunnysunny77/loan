@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[29]:
+# In[267]:
 
 
 # Imports
@@ -17,7 +17,7 @@ import xgboost as xgb
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score, fbeta_score
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
@@ -28,7 +28,7 @@ print("Using device:", device)
 
 # Constants
 lr = 1e-3
-batch_size = 64
+batch_size = 128
 num_epochs = 75
 
 # pd 
@@ -36,7 +36,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[30]:
+# In[268]:
 
 
 def load_datasets(base_path="./"):
@@ -126,10 +126,16 @@ def engineer_features(df):
     df_engi['AgeBin'] = pd.cut(
         df_engi['age_capped'],
         bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
-        labels=['<25', '25-35', '35-45', '45-55', '55-65', '65-75', '75-85', '85+'],
+        labels=['Age_0_25', 'Age_25_35', 'Age_35_45', 'Age_45_55', 'Age_55_65', 'Age_65_75', 'Age_75_85', 'Age_85_100'],
         include_lowest=True
     )
-    print("Engineered features with age bins")
+
+    df_engi['DebtTimesUtil'] = df_engi['DebtRatio'] * df_engi['RevolvingUtilizationOfUnsecuredLines']
+    df_engi['IncomePerOpenCredit'] = df_engi['MonthlyIncome'] / df_engi['NumberOfOpenCreditLinesAndLoans'].replace(0, np.nan)
+    df_engi['PastDuePerAge'] = df_engi['TotalPastDue'] / df_engi['age'].replace(0, np.nan)
+    df_engi['DebtPerCreditTimesAge'] = df_engi['DebtRatioPerAge'] * df_engi['NumberOfOpenCreditLinesAndLoans']
+
+    print("Engineered features")
     return df_engi
 
 def drop_high_missing_cols(df, threshold=0.3):
@@ -197,7 +203,6 @@ def collapse_rare_categories(df, threshold=0.005):
         print("No rare categories collapsed")
         rare_maps = None
     return df_copy, rare_maps
-
 
 def impute_and_scale(df, threshold=1.0):
 
@@ -352,7 +357,7 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
         return df_cleaned
 
 
-# In[31]:
+# In[269]:
 
 
 # Load datasets
@@ -360,7 +365,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[32]:
+# In[270]:
 
 
 #summary
@@ -368,7 +373,7 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[33]:
+# In[271]:
 
 
 # Outlier Handling
@@ -396,7 +401,7 @@ plt.xticks(rotation=45)
 plt.show()
 
 
-# In[34]:
+# In[272]:
 
 
 # Select targets
@@ -404,7 +409,7 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[35]:
+# In[273]:
 
 
 # Split train/test
@@ -418,56 +423,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[36]:
+# In[274]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[37]:
+# In[275]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.5)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=1)
 
 
-# In[38]:
+# In[276]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[39]:
+# In[249]:
 
 
 # Drop correlated features here
-df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=1)
+df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=9999)
 
 
-# In[40]:
+# In[250]:
 
 
 # Collapse rare categories on training data
-df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.02)
+df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.0125)
 
 
-# In[41]:
+# In[251]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[42]:
+# In[252]:
 
 
 # feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=50, top_n=30)
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=50.2, top_n=30)
 
 
-# In[43]:
+# In[253]:
 
 
 # Process
@@ -481,21 +486,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[44]:
+# In[254]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[45]:
+# In[255]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[46]:
+# In[256]:
 
 
 # Encode
@@ -530,12 +535,12 @@ print("NaNs in val:", X_val.isna().sum().sum())
 print("NaNs in test:", X_test.isna().sum().sum())
 
 
-# In[47]:
+# In[257]:
 
 
 # Convert to tensors
 X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
-y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
 X_val_tensor = torch.tensor(X_val.values, dtype=torch.float32)
 y_val_tensor = torch.tensor(y_val, dtype=torch.long)
 X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
@@ -547,7 +552,7 @@ weights_tensor = torch.tensor([class_weight_dict[int(c)] for c in y_train], dtyp
 print("Class weights:", class_weight_dict)
 
 
-# In[48]:
+# In[258]:
 
 
 # DataLoaders
@@ -562,7 +567,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[49]:
+# In[259]:
 
 
 # Model
@@ -592,7 +597,7 @@ print(model)
 sum(p.numel() for p in model.parameters())
 
 
-# In[50]:
+# In[260]:
 
 
 # Loss
@@ -614,11 +619,10 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = WeightedBinaryFocalLoss(alpha=alpha, gamma=3)
 
 
-# In[51]:
+# In[261]:
 
 
-# Train
-optimizer = optim.Adam(model.parameters(), lr=lr)
+optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-3)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=5, factor=0.5)
 weights_tensor = weights_tensor.to(device)
 
@@ -630,28 +634,48 @@ patience = 17
 for epoch in range(num_epochs):
     model.train()
     running_loss = 0.0
+    train_logits = []
+    train_labels = []
+
     for Xb, yb in train_loader:
-        Xb = Xb.to(device); yb = yb.to(device).float()
+        Xb = Xb.to(device)
+        yb = yb.to(device).float()
+
         optimizer.zero_grad()
         logits = model(Xb)
         loss = loss_fn(logits, yb)
         loss.backward()
         optimizer.step()
+
         running_loss += loss.item() * Xb.size(0)
 
+        train_logits.append(logits.detach().cpu())
+        train_labels.append(yb.cpu())
+
     train_loss = running_loss / len(train_loader.dataset)
+    train_logits = torch.cat(train_logits)
+    train_labels = torch.cat(train_labels)
+    train_probs = torch.sigmoid(train_logits).numpy()
+    train_auc = roc_auc_score(train_labels.numpy(), train_probs)
 
     model.eval()
+    val_loss_running = 0.0
     val_logits = []
     val_labels = []
 
     with torch.no_grad():
         for Xb, yb in val_loader:
             Xb = Xb.to(device)
-            logits = model(Xb)
-            val_logits.append(logits.cpu())
-            val_labels.append(yb)
+            yb = yb.to(device).float()
 
+            logits = model(Xb)
+            loss = loss_fn(logits, yb)
+            val_loss_running += loss.item() * Xb.size(0)
+
+            val_logits.append(logits.cpu())
+            val_labels.append(yb.cpu())
+
+    val_loss = val_loss_running / len(val_loader.dataset)
     val_logits = torch.cat(val_logits)
     val_labels = torch.cat(val_labels)
     val_probs = torch.sigmoid(val_logits).numpy()
@@ -669,15 +693,18 @@ for epoch in range(num_epochs):
 
     scheduler.step(val_auc)
 
-    print(f"Epoch {epoch+1}/{num_epochs} | Train loss: {train_loss:.6f} | Val AUC: {val_auc:.4f}")
+    print(f"Epoch {epoch+1}/{num_epochs} | "
+          f"Train loss: {train_loss:.6f} | Train AUC: {train_auc:.4f} | "
+          f"Val loss: {val_loss:.6f} | Val AUC: {val_auc:.4f}")
 
 model.load_state_dict(best_model_state)
 print(f"Best model (val_auc={best_auc:.4f}) restored")
 
 
-# In[52]:
+# In[262]:
 
 
+# Evaluation
 model.eval()
 y_val_probs = []
 
@@ -689,16 +716,11 @@ with torch.no_grad():
         y_val_probs.extend(probs.cpu().numpy())
 
 y_val_probs = np.array(y_val_probs)
-y_val_true = y_val 
-prec, rec, thresholds = precision_recall_curve(y_val_true, y_val_probs)
-denom = prec + rec
-f1 = np.zeros_like(denom)
-mask = denom != 0
-f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
-best_thresh = thresholds[np.argmax(f1[:-1])]
 
-alpha = - 0.019 # adjusted for default
-adjusted_thresh = np.clip(best_thresh + alpha, 0, 1)
+# Target defaults
+prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
+f_beta_scores = [fbeta_score(y_val, (y_val_probs > t).astype(int), beta=2) for t in thresholds]
+best_thresh = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
 with torch.no_grad():
@@ -708,7 +730,7 @@ with torch.no_grad():
         probs = torch.sigmoid(outputs)
         y_test_probs.extend(probs.cpu().numpy())
 y_test_probs = np.array(y_test_probs)
-y_test_pred_opt = (y_test_probs > adjusted_thresh).astype(int)
+y_test_pred_opt = (y_test_probs > best_thresh).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
 report = classification_report(y_test, y_test_pred_opt, target_names=target_names)
@@ -735,7 +757,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[53]:
+# In[263]:
 
 
 # Data sets
@@ -744,7 +766,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[54]:
+# In[264]:
 
 
 # Model
@@ -771,7 +793,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[55]:
+# In[265]:
 
 
 # Train
@@ -785,27 +807,23 @@ model_b = xgb.train(
 )
 
 
-# In[56]:
+# In[266]:
 
 
 # Evaluation
 y_probs = model_b.predict(dtest) 
 
+# Target defaults
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-denom = prec + rec
-f1 = np.zeros_like(denom)
-mask = denom != 0
-f1[mask] = 2 * prec[mask] * rec[mask] / denom[mask]
-best_thresh = thresholds[np.argmax(f1[:-1])]
+f_beta_scores = [fbeta_score(y_test, (y_probs > t).astype(int), beta=2) for t in thresholds]
+best_thresh = thresholds[np.argmax(f_beta_scores)]
 
-alpha = - 0.099 # adjusted for default
-adjusted_thresh = np.clip(best_thresh + alpha, 0, 1)
-y_pred_opt = (y_probs > adjusted_thresh).astype(int)
+y_pred = (y_probs > best_thresh).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
-report = classification_report(y_test, y_pred_opt, target_names=target_names)
-acc = accuracy_score(y_test, y_pred_opt)
-cm = confusion_matrix(y_test, y_pred_opt)
+report = classification_report(y_test, y_pred, target_names=target_names)
+acc = accuracy_score(y_test, y_pred)
+cm = confusion_matrix(y_test, y_pred)
 tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 roc_auc = roc_auc_score(y_test, y_probs)
@@ -824,15 +842,6 @@ sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
-plt.show()
-
-plt.plot(thresholds, f1[:-1])
-plt.axvline(best_thresh, color='r', linestyle='--', label=f"F1 max = {best_thresh:.3f}")
-plt.axvline(adjusted_thresh, color='g', linestyle='--', label=f"Adjusted = {adjusted_thresh:.3f}")
-plt.xlabel("Threshold")
-plt.ylabel("F1 Score")
-plt.legend()
-plt.title("F1 vs Threshold (Validation)")
 plt.show()
 
 
