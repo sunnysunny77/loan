@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[467]:
+# In[1]:
 
 
 # Imports
@@ -38,7 +38,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[468]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
@@ -503,7 +503,7 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
         return df_cleaned
 
 
-# In[469]:
+# In[3]:
 
 
 # Load datasets
@@ -511,7 +511,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[470]:
+# In[4]:
 
 
 #summary
@@ -519,7 +519,7 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[471]:
+# In[5]:
 
 
 # Outlier Handling
@@ -527,7 +527,7 @@ df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.975, threshold_low=0.025)
 
 
-# In[472]:
+# In[6]:
 
 
 # Select targets
@@ -535,7 +535,7 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[473]:
+# In[7]:
 
 
 # Split train/test
@@ -549,56 +549,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[474]:
+# In[8]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[475]:
+# In[9]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=1)
 
 
-# In[476]:
+# In[10]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[477]:
+# In[11]:
 
 
 # Drop correlated features
 df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=9999)
 
 
-# In[478]:
+# In[12]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.01)
 
 
-# In[479]:
+# In[13]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[480]:
+# In[14]:
 
 
 # Feature selection
 df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=45, top_n=50)
 
 
-# In[481]:
+# In[15]:
 
 
 # Process
@@ -612,79 +612,97 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[482]:
+# In[16]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[483]:
+# In[17]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[484]:
+# In[18]:
 
 
 # Encode
 le = LabelEncoder()
-y_train = le.fit_transform(y_train)  
-y_val = le.transform(y_val)       
-y_test = le.transform(y_test)    
+y_train = le.fit_transform(y_train)
+y_val = le.transform(y_val)
+y_test = le.transform(y_test)
 
 cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
 
-X_train = pd.get_dummies(X_train, columns=cat_cols, drop_first=False)
-X_val = pd.get_dummies(X_val, columns=cat_cols, drop_first=False)
-X_test = pd.get_dummies(X_test, columns=cat_cols, drop_first=False)
-X_val = X_val.reindex(columns=X_train.columns, fill_value=0)
-X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+cat_maps = {
+    col: {cat: idx for idx, cat in enumerate(X_train[col].astype(str).unique())}
+    for col in cat_cols
+}
 
-X_train = X_train.astype('float32')
-X_val = X_val.astype('float32')
-X_test = X_test.astype('float32')
+for col in cat_cols:
+    X_train[col] = X_train[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
-print("Train shape:", X_train.shape)
-print("Val shape:  ", X_val.shape)
-print("Test shape: ", X_test.shape)
+num_cols = [col for col in X_train.columns if col not in cat_cols]
 
-missing_val_cols = set(X_train.columns) - set(X_val.columns)
-missing_test_cols = set(X_train.columns) - set(X_test.columns)
-print("Missing in val:", missing_val_cols)
-print("Missing in test:", missing_test_cols)
+X_train_num = X_train[num_cols].astype('float32').values
+X_val_num = X_val[num_cols].astype('float32').values
+X_test_num = X_test[num_cols].astype('float32').values
 
-print("NaNs in train:", X_train.isna().sum().sum())
-print("NaNs in val:", X_val.isna().sum().sum())
-print("NaNs in test:", X_test.isna().sum().sum())
+X_train_cat = X_train[cat_cols].astype('int64').values
+X_val_cat = X_val[cat_cols].astype('int64').values
+X_test_cat = X_test[cat_cols].astype('int64').values
 
 
-# In[485]:
+# In[19]:
 
 
 # Convert to tensors
-X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
+X_train_num_tensor = torch.tensor(X_train_num)
+X_val_num_tensor = torch.tensor(X_val_num)
+X_test_num_tensor = torch.tensor(X_test_num)
+
+X_train_cat_tensor = torch.tensor(X_train_cat)
+X_val_cat_tensor = torch.tensor(X_val_cat)
+X_test_cat_tensor = torch.tensor(X_test_cat)
+
 y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
-X_val_tensor = torch.tensor(X_val.values, dtype=torch.float32)
 y_val_tensor = torch.tensor(y_val, dtype=torch.long)
-X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
-y_test_tensor  = torch.tensor(y_test, dtype=torch.long)
+y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+
 classes = np.unique(y_train)
 class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
 class_weight_dict = dict(zip(classes, class_weights))
 weights_tensor = torch.tensor([class_weight_dict[int(c)] for c in y_train], dtype=torch.float32)
+
+print("Numeric input shape:", X_train_num_tensor.shape)
+print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[486]:
+# In[20]:
 
 
-# DataLoaders
-train_ds = TensorDataset(X_train_tensor, y_train_tensor)
-val_ds = TensorDataset(X_val_tensor, y_val_tensor)
-test_ds = TensorDataset(X_test_tensor, y_test_tensor)
+# Datasets
+class TabularDataset(torch.utils.data.Dataset):
+    def __init__(self, x_num, x_cat, y):
+        self.x_num = x_num
+        self.x_cat = x_cat
+        self.y = y
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, idx):
+        return self.x_num[idx], self.x_cat[idx], self.y[idx]
+
+train_ds = TabularDataset(X_train_num_tensor, X_train_cat_tensor, y_train_tensor)
+val_ds = TabularDataset(X_val_num_tensor, X_val_cat_tensor, y_val_tensor)
+test_ds = TabularDataset(X_test_num_tensor, X_test_cat_tensor, y_test_tensor)
 
 train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
 val_loader = DataLoader(val_ds, batch_size=64)
@@ -693,40 +711,78 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[487]:
+# In[21]:
 
 
 # Model
 class NN(nn.Module):
-    def __init__(self, num_input):
+    def __init__(self, num_numeric, cat_dims, emb_dims):
         super().__init__()
-        self.fc1 = nn.Linear(num_input, 256)
+
+        self.emb_layers = nn.ModuleList([
+            nn.Embedding(cat_dim, emb_dim)
+            for cat_dim, emb_dim in zip(cat_dims, emb_dims)
+        ])
+        self.emb_dropout = nn.Dropout(0.3)
+
+        self.bn_num = nn.BatchNorm1d(num_numeric)
+
+        total_emb_dim = sum(emb_dims)
+        self.input_dim = num_numeric + total_emb_dim
+
+        self.fc1 = nn.Linear(self.input_dim, 256)
         self.bn1 = nn.BatchNorm1d(256)
         self.fc2 = nn.Linear(256, 128)
         self.bn2 = nn.BatchNorm1d(128)
+
+        self.skip_proj_main = nn.Linear(self.input_dim, 128)
+
+        self.cat_skip = nn.Sequential(
+            nn.Linear(total_emb_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.3)
+        )
+
         self.out = nn.Linear(128, 1)
+
         self.act = nn.ReLU()
         self.drop = nn.Dropout(0.5)
 
-    def forward(self, x):
-        x = self.act(self.bn1(self.fc1(x)))
-        x = self.drop(x)
-        x = self.act(self.bn2(self.fc2(x)))
-        x = self.drop(x)
-        x = self.out(x)
-        return x.squeeze(1)
+    def forward(self, x_num, x_cat):
+        emb_outs = [emb(x_cat[:, i]) for i, emb in enumerate(self.emb_layers)]
+        x_cat_emb = torch.cat(emb_outs, dim=1)
+        x_cat_emb = self.emb_dropout(x_cat_emb)
 
-num_input = X_train.shape[1]  
-model = NN(num_input).to(device)
+        x_num = self.bn_num(x_num)
 
+        x = torch.cat([x_num, x_cat_emb], dim=1)
+
+        x1 = self.act(self.bn1(self.fc1(x)))
+        x1 = self.drop(x1)
+        x2 = self.act(self.bn2(self.fc2(x1)))
+        x2 = self.drop(x2)
+
+        x_main_skip = self.skip_proj_main(x)
+        x_cat_skip = self.cat_skip(x_cat_emb)
+
+        x2 = x2 + x_main_skip + x_cat_skip
+
+        out = self.out(x2)
+        return out.squeeze(1)
+
+cat_dims = [len(cat_maps[col]) for col in cat_cols]
+emb_dims = [min(50, (cat_dim + 1) // 2) for cat_dim in cat_dims]
+
+model = NN(X_train_num.shape[1], cat_dims, emb_dims).to(device)
 print(model)
-sum(p.numel() for p in model.parameters())
+print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[488]:
+# In[22]:
 
 
-class WeightedBinaryFocalLoss(nn.Module): 
+class FocalLoss(nn.Module): 
     def __init__(self, alpha=0.25, gamma=2.0, pos_weight=None):
         super().__init__()
         self.alpha = alpha
@@ -746,10 +802,10 @@ class WeightedBinaryFocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = WeightedBinaryFocalLoss(alpha=alpha, gamma=2)
+loss_fn = FocalLoss(alpha=alpha, gamma=2)
 
 
-# In[489]:
+# In[23]:
 
 
 num_runs = 3
@@ -774,16 +830,16 @@ for run in range(num_runs):
         total_train_loss = 0.0
         train_logits, train_labels = [], []
 
-        for Xb, yb in train_loader:
-            Xb, yb = Xb.to(device), yb.to(device).float()
+        for x_num, x_cat, yb in train_loader:
+            x_num, x_cat, yb = x_num.to(device), x_cat.to(device), yb.to(device).float()
 
             optimizer.zero_grad()
-            logits = model(Xb)
+            logits = model(x_num, x_cat)  
             loss = loss_fn(logits, yb)
             loss.backward()
             optimizer.step()
 
-            total_train_loss += loss.item() * Xb.size(0)
+            total_train_loss += loss.item() * x_num.size(0)
             train_logits.append(logits.detach().cpu())
             train_labels.append(yb.cpu())
 
@@ -798,11 +854,12 @@ for run in range(num_runs):
         val_logits, val_labels = [], []
 
         with torch.no_grad():
-            for Xb, yb in val_loader:
-                Xb, yb = Xb.to(device), yb.to(device).float()
-                logits = model(Xb)
+            for x_num, x_cat, yb in val_loader:
+                x_num, x_cat, yb = x_num.to(device), x_cat.to(device), yb.to(device).float()
+                logits = model(x_num, x_cat)
+
                 loss = loss_fn(logits, yb)
-                total_val_loss += loss.item() * Xb.size(0)
+                total_val_loss += loss.item() * x_num.size(0)
                 val_logits.append(logits.cpu())
                 val_labels.append(yb.cpu())
 
@@ -838,7 +895,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[490]:
+# In[24]:
 
 
 # Evaluation
@@ -846,10 +903,10 @@ model.eval()
 y_val_probs = []
 
 with torch.no_grad():
-    for X_batch, _ in val_loader:
-        X_batch = X_batch.to(device)
-        outputs = model(X_batch)
-        probs = torch.sigmoid(outputs)  
+    for x_num, x_cat, yb in val_loader:
+        x_num, x_cat = x_num.to(device), x_cat.to(device)
+        outputs = model(x_num, x_cat)
+        probs = torch.sigmoid(outputs)
         y_val_probs.extend(probs.cpu().numpy())
 
 y_val_probs = np.array(y_val_probs)
@@ -861,11 +918,12 @@ best_thresh = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
 with torch.no_grad():
-    for X_batch, _ in test_loader:
-        X_batch = X_batch.to(device)
-        outputs = model(X_batch)
+    for x_num, x_cat, _ in test_loader:
+        x_num, x_cat = x_num.to(device), x_cat.to(device)
+        outputs = model(x_num, x_cat)
         probs = torch.sigmoid(outputs)
         y_test_probs.extend(probs.cpu().numpy())
+
 y_test_probs = np.array(y_test_probs)
 y_test_pred_opt = (y_test_probs > best_thresh).astype(int)
 
@@ -894,7 +952,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[491]:
+# In[29]:
 
 
 # Data sets
@@ -903,7 +961,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[492]:
+# In[30]:
 
 
 # Model
@@ -930,7 +988,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[493]:
+# In[31]:
 
 
 # Train
@@ -944,7 +1002,7 @@ model_b = xgb.train(
 )
 
 
-# In[494]:
+# In[32]:
 
 
 # Evaluation
@@ -980,12 +1038,6 @@ plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
-
-
-# In[ ]:
-
-
-
 
 
 # In[ ]:
