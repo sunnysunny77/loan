@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[267]:
+# In[467]:
 
 
 # Imports
@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost as xgb
+import copy
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
@@ -21,13 +22,14 @@ from sklearn.metrics import classification_report, accuracy_score, confusion_mat
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.ensemble import HistGradientBoostingClassifier
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # Constants
-lr = 1e-3
+lr = 5e-4
 batch_size = 128
 num_epochs = 75
 
@@ -36,23 +38,26 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[268]:
+# In[468]:
 
 
 def load_datasets(base_path="./"):
 
     files = {"train": "cs-training.csv"}
     dfs = {}
+
     for key, filename in files.items():
         print(f"Loading {filename}...")
         dfs[key] = pd.read_csv(base_path + filename, index_col=0)
         print(f"Loaded {filename} with {len(dfs[key].columns)} columns")
+
     return dfs
 
 def dataset_summary(df, show_counts=True):
 
     total_rows = len(df)
     total_duplicates = df.duplicated().sum()
+
     summary = pd.DataFrame({
         "dtype": df.dtypes,
         "non_null_count": df.notna().sum(),
@@ -61,12 +66,44 @@ def dataset_summary(df, show_counts=True):
         "unique_count": df.nunique(),
         "duplicates_in_dataset": total_duplicates
     })
+
     print(f"Dataset shape: {df.shape}")
     if show_counts:
         print(f"Total rows: {total_rows}")
         print(f"Total duplicate rows: {total_duplicates}")
     summary = summary.sort_values(by="missing_%", ascending=False)
+
     return summary
+
+def outlier_handling(df, target_col, threshold_high=99, threshold_low=1):
+
+    df_copy = df.copy()
+
+    numeric_cols = df_copy.select_dtypes(include=["float64", "int64", "float32"]).columns.tolist()
+    df_copy[numeric_cols] = df_copy[numeric_cols].fillna(0)
+
+    X = df_copy.drop(columns=[target_col])
+    y = df_copy[target_col]
+
+    hgb = HistGradientBoostingClassifier(
+        max_iter=100,
+        random_state=42,
+        min_samples_leaf=20
+    )
+    hgb.fit(X, y)
+
+    y_pred_proba = hgb.predict_proba(X)[:, 1]
+
+    high_val = np.percentile(y_pred_proba, threshold_high)
+    low_val = np.percentile(y_pred_proba, threshold_low)
+
+    mask = (y_pred_proba < high_val) & (y_pred_proba > low_val)
+    df_filtered = df_copy.loc[mask].reset_index(drop=True)
+
+    print(f"Removed {len(df_copy) - len(df_filtered)} extreme rows according to model probabilities")
+    print(df_filtered.describe())
+
+    return df_filtered
 
 def drop_target_and_ids(df):
 
@@ -74,74 +111,161 @@ def drop_target_and_ids(df):
     feature_cols_to_drop = ["SeriousDlqin2yrs"]
     target = df_copy["SeriousDlqin2yrs"]
     df_raw_features = df_copy.drop(columns=feature_cols_to_drop)
+
     print(f"Dropped target column: {feature_cols_to_drop}")
+
     return df_raw_features, target, feature_cols_to_drop
 
 def engineer_features(df):
+    """
+    Create new engineered features for credit risk modeling.
+
+    The goal is to extract behavioral, ratio-based, and interaction features
+    from credit-related variables to better capture relationships
+    linked to default risk or repayment probability.
+    """
 
     df_engi = df.copy()
 
+    # -------------------------------------------------------------------------
+    # AGE CAPPING
+    # Cap age at 100 to prevent outliers (e.g., data errors like 200+ years old)
+    # and ensure all downstream ratios remain stable.
+    # Keep both the capped 'age' and a duplicate 'age_capped' for reference.
+    # -------------------------------------------------------------------------
+    df_engi["age"] = np.minimum(df_engi["age"], 100)
+    df_engi["age_capped"] = df_engi["age"]
+
+    # -------------------------------------------------------------------------
+    # DELINQUENCY-RELATED FEATURES
+    # Capture overall and major delinquency behavior as indicators of risk.
+    # -------------------------------------------------------------------------
     df_engi["TotalPastDue"] = (
         df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
         df_engi["NumberOfTimes90DaysLate"] +
         df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
-    )
-    df_engi['HasDelinquencyBinary'] = (df_engi['TotalPastDue'] > 0).astype(int)
-    df_engi['MajorDelinquencyBinary'] = (df_engi['NumberOfTimes90DaysLate'] > 0).astype(int)
-    df_engi['HasMonthlyIncomeBinary'] = df_engi['MonthlyIncome'].notna().astype(int)
-    df_engi['MonthlyDebtAmount'] = df_engi['DebtRatio'] * df_engi['MonthlyIncome']
-    df_engi['AvailableCreditRatio'] = (
-        df_engi['NumberOfOpenCreditLinesAndLoans'] /
-        df_engi['NumberRealEstateLoansOrLines'].replace(0, np.nan)
-    )
-    df_engi['Log_MonthlyIncome'] = np.log1p(df_engi['MonthlyIncome'])
-    df_engi['UtilToAgeRatio'] = df_engi['RevolvingUtilizationOfUnsecuredLines'] / df_engi['age']
+    )  # ➤ total count of all delinquent events
+    df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)  # ➤ any delinquency
+    df_engi["MajorDelinquencyBinary"] = (df_engi["NumberOfTimes90DaysLate"] > 0).astype(int)  # ➤ serious delinquency
+    df_engi["HasMonthlyIncomeBinary"] = df_engi["MonthlyIncome"].notna().astype(int)  # ➤ income reporting flag
 
+    # -------------------------------------------------------------------------
+    # INCOME / DEBT RELATIONSHIPS
+    # Key ratios that show how income interacts with debt exposure and credit usage.
+    # -------------------------------------------------------------------------
+    df_engi["MonthlyDebtAmount"] = df_engi["DebtRatio"] * df_engi["MonthlyIncome"]
+    # ➤ estimated monthly debt payment amount
+
+    df_engi["AvailableCreditRatio"] = (
+        df_engi["NumberOfOpenCreditLinesAndLoans"] /
+        df_engi["NumberRealEstateLoansOrLines"].replace(0, np.nan)
+    )
+    # ➤ ratio of open credit lines to real estate loans — proxy for portfolio mix
+
+    df_engi["Log_MonthlyIncome"] = np.log1p(df_engi["MonthlyIncome"])
+    # ➤ stabilizes skew in income distribution
+
+    df_engi["UtilToAgeRatio"] = (
+        df_engi["RevolvingUtilizationOfUnsecuredLines"] /
+        df_engi["age"].replace(0, np.nan)
+    )
+    # ➤ normalizes utilization by age (younger borrowers tend to have higher utilization)
+
+    # -------------------------------------------------------------------------
+    # CREDIT MIX FEATURE
+    # Encodes the composition of credit exposure to distinguish between borrowers
+    # with real-estate vs consumer debt.
+    # -------------------------------------------------------------------------
     def credit_mix(row):
-        if row['NumberRealEstateLoansOrLines'] == 0 and row['NumberOfOpenCreditLinesAndLoans'] == 0:
-            return 'NoCredit'
-        elif row['NumberRealEstateLoansOrLines'] > 0 and row['NumberOfOpenCreditLinesAndLoans'] == 0:
-            return 'RealEstateOnly'
-        elif row['NumberRealEstateLoansOrLines'] == 0 and row['NumberOfOpenCreditLinesAndLoans'] > 0:
-            return 'OtherCreditOnly'
+        if row["NumberRealEstateLoansOrLines"] == 0 and row["NumberOfOpenCreditLinesAndLoans"] == 0:
+            return "NoCredit"
+        elif row["NumberRealEstateLoansOrLines"] > 0 and row["NumberOfOpenCreditLinesAndLoans"] == 0:
+            return "RealEstateOnly"
+        elif row["NumberRealEstateLoansOrLines"] == 0 and row["NumberOfOpenCreditLinesAndLoans"] > 0:
+            return "OtherCreditOnly"
         else:
-            return 'MixedCredit'
+            return "MixedCredit"
 
-    df_engi['CreditMix'] = df_engi.apply(credit_mix, axis=1)
+    df_engi["CreditMix"] = df_engi.apply(credit_mix, axis=1)
 
+    # -------------------------------------------------------------------------
+    # HIGH UTILIZATION FLAG
+    # Simple binary threshold — high utilization is a strong risk signal.
+    # -------------------------------------------------------------------------
     threshold = 0.8
-    df_engi['IsHighUtilizationBinary'] = (
-        df_engi['RevolvingUtilizationOfUnsecuredLines'] > threshold
+    df_engi["IsHighUtilizationBinary"] = (
+        df_engi["RevolvingUtilizationOfUnsecuredLines"] > threshold
     ).astype(int)
 
-    df_engi['DebtRatioPerAge'] = df_engi['DebtRatio'] / df_engi['age'].replace(0, np.nan)
-    df_engi['MonthlyDebtPerIncome'] = df_engi['MonthlyDebtAmount'] / df_engi['MonthlyIncome'].replace(0, np.nan)
-    df_engi['PastDuePerCreditLine'] = df_engi['TotalPastDue'] / (
-        df_engi['NumberOfOpenCreditLinesAndLoans'] + df_engi['NumberRealEstateLoansOrLines']
-    ).replace(0, np.nan)
-    df_engi['UtilTimesDebtRatio'] = df_engi['RevolvingUtilizationOfUnsecuredLines'] * df_engi['DebtRatio']
-    df_engi['AgeTimesIncome'] = df_engi['age'] * df_engi['MonthlyIncome']
+    # -------------------------------------------------------------------------
+    # RATIO AND INTERACTION FEATURES
+    # Combine multiple behavioral and financial indicators to enrich the signal.
+    # -------------------------------------------------------------------------
+    df_engi["DebtRatioPerAge"] = (
+        df_engi["DebtRatio"] / df_engi["age"].replace(0, np.nan)
+    )  # ➤ younger borrowers with high debt ratio = higher risk
 
-    df_engi['age_capped'] = np.minimum(df_engi['age'], 100)
-    df_engi['AgeBin'] = pd.cut(
-        df_engi['age_capped'],
+    df_engi["MonthlyDebtPerIncome"] = (
+        df_engi["MonthlyDebtAmount"] / df_engi["MonthlyIncome"].replace(0, np.nan)
+    )  # ➤ fraction of income spent on debt payments
+
+    df_engi["PastDuePerCreditLine"] = (
+        df_engi["TotalPastDue"] /
+        (df_engi["NumberOfOpenCreditLinesAndLoans"] + df_engi["NumberRealEstateLoansOrLines"]).replace(0, np.nan)
+    )  # ➤ delinquency rate per credit line
+
+    df_engi["UtilTimesDebtRatio"] = (
+        df_engi["RevolvingUtilizationOfUnsecuredLines"] * df_engi["DebtRatio"]
+    )  # ➤ compound exposure to both utilization and indebtedness
+
+    df_engi["AgeTimesIncome"] = df_engi["age"] * df_engi["MonthlyIncome"]
+    # ➤ proxy for lifetime earning capacity
+
+    # -------------------------------------------------------------------------
+    # AGE BINNING
+    # Convert age into ordered categorical buckets for non-linear patterns.
+    # -------------------------------------------------------------------------
+    df_engi["AgeBin"] = pd.cut(
+        df_engi["age"],
         bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
-        labels=['Age_0_25', 'Age_25_35', 'Age_35_45', 'Age_45_55', 'Age_55_65', 'Age_65_75', 'Age_75_85', 'Age_85_100'],
+        labels=[
+            "Age_0_25", "Age_25_35", "Age_35_45", "Age_45_55",
+            "Age_55_65", "Age_65_75", "Age_75_85", "Age_85_100"
+        ],
         include_lowest=True
     )
 
-    df_engi['DebtTimesUtil'] = df_engi['DebtRatio'] * df_engi['RevolvingUtilizationOfUnsecuredLines']
-    df_engi['IncomePerOpenCredit'] = df_engi['MonthlyIncome'] / df_engi['NumberOfOpenCreditLinesAndLoans'].replace(0, np.nan)
-    df_engi['PastDuePerAge'] = df_engi['TotalPastDue'] / df_engi['age'].replace(0, np.nan)
-    df_engi['DebtPerCreditTimesAge'] = df_engi['DebtRatioPerAge'] * df_engi['NumberOfOpenCreditLinesAndLoans']
+    # -------------------------------------------------------------------------
+    # ADVANCED INTERACTIONS
+    # Multiply complementary variables to capture second-order relationships.
+    # -------------------------------------------------------------------------
+    df_engi["DebtTimesUtil"] = (
+        df_engi["DebtRatio"] * df_engi["RevolvingUtilizationOfUnsecuredLines"]
+    )  # ➤ joint measure of overall financial stress
 
+    df_engi["IncomePerOpenCredit"] = (
+        df_engi["MonthlyIncome"] /
+        df_engi["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
+    )  # ➤ average income per credit line — proxy for capacity
+
+    df_engi["PastDuePerAge"] = (
+        df_engi["TotalPastDue"] / df_engi["age"].replace(0, np.nan)
+    )  # ➤ delinquency normalized by age
+
+    df_engi["DebtPerCreditTimesAge"] = (
+        df_engi["DebtRatioPerAge"] * df_engi["NumberOfOpenCreditLinesAndLoans"]
+    )  # ➤ how exposure scales with both debt ratio and age
+
+    # -------------------------------------------------------------------------
     print("Engineered features")
+
     return df_engi
 
 def drop_high_missing_cols(df, threshold=0.3):
 
     missing_frac = df.isna().mean()
     hm_cols_to_drop = missing_frac[missing_frac > threshold].index.tolist()
+
     if hm_cols_to_drop:
         df_drop = df.drop(columns=hm_cols_to_drop)
         print(f"Dropped {len(hm_cols_to_drop)} columns with missing >{threshold*100:.0f}%")
@@ -149,12 +273,14 @@ def drop_high_missing_cols(df, threshold=0.3):
     else:
         df_drop = df.copy()
         print("No columns dropped for missing threshold")
+
     return df_drop, hm_cols_to_drop
 
 def drop_high_card_cols(df, threshold=50):
 
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
     hc_cols_to_drop = [col for col in cat_cols if df[col].nunique() > threshold]
+
     if hc_cols_to_drop:
         df_high = df.drop(columns=hc_cols_to_drop, errors='ignore')
         print(f"Dropped {len(hc_cols_to_drop)} high-cardinality columns (> {threshold} unique)")
@@ -162,34 +288,42 @@ def drop_high_card_cols(df, threshold=50):
     else:
         df_high = df.copy()
         print("No high-cardinality columns dropped")
+
     return df_high, hc_cols_to_drop
 
 def drop_correlated(df, threshold=0.95):
 
     df_temp = df.copy()
+
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
+
     corr_matrix = df_temp.corr().abs()
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(corr_matrix, cmap='coolwarm', center=0, annot=False, linewidths=0.5)
+    plt.title("Feature Correlation Matrix (Before Dropping)")
+    plt.show()
+
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     corr_cols_to_drop = [column for column in upper.columns if any(upper[column] > threshold)]
+
     if corr_cols_to_drop:
         df_corr = df.drop(columns=corr_cols_to_drop)
-        print(f"Dropped {len(corr_cols_to_drop)} highly correlated columns")
+        print(f"Dropped {len(corr_cols_to_drop)} highly correlated columns (>|{threshold}|).")
         print(f"Columns dropped: {corr_cols_to_drop}")
     else:
         df_corr = df.copy()
-        print("No highly correlated features dropped")
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(corr_matrix, cmap='coolwarm', center=0, annot=False, linewidths=0.5)
-    plt.title("Feature Correlation Matrix")
-    plt.show()
+        print("No highly correlated features dropped.")
+
     return df_corr, corr_cols_to_drop
 
 def collapse_rare_categories(df, threshold=0.005):
 
     df_copy = df.copy()
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
+
     rare_maps = {}
     for col in cat_cols:
         freqs = df_copy[col].value_counts(normalize=True)
@@ -198,10 +332,12 @@ def collapse_rare_categories(df, threshold=0.005):
             df_copy[col] = df_copy[col].astype('object').replace(rare_cats, 'Other')
             rare_maps[col] = set(rare_cats)
             print(f"Collapsed {len(rare_cats)} rare categories in column '{col}'")
+
             print(f"Categories dropped: {list(rare_cats)}")
     if not rare_maps:
         print("No rare categories collapsed")
         rare_maps = None
+
     return df_copy, rare_maps
 
 def impute_and_scale(df, threshold=1.0):
@@ -213,6 +349,7 @@ def impute_and_scale(df, threshold=1.0):
     cat_imputer = None
     robust_scaler = None
     std_scaler = None
+
     if numeric_cols:
         df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
         num_imputer = SimpleImputer(strategy='median')
@@ -231,7 +368,9 @@ def impute_and_scale(df, threshold=1.0):
             std_scaler = StandardScaler()
             df_copy[normal_cols] = std_scaler.fit_transform(df_copy[normal_cols]).astype(np.float32)
     df_processed = df_copy.copy()
+
     print("Imputed and scaled features")
+
     return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
 
 def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
@@ -240,6 +379,7 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
+
     X_train, X_val, y_train, y_val = train_test_split(
         df_temp, target, test_size=0.2, random_state=random_state, stratify=target
     )
@@ -248,6 +388,7 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     neg_count = sum(y_train == 0)
     pos_count = sum(y_train == 1)
     scale_pos_weight = neg_count / pos_count
+
     params = {
         "objective": "binary:logistic",
         "eval_metric": ["logloss", "auc"],
@@ -260,8 +401,9 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
         "alpha": 0.3,
         "seed": random_state,
         "scale_pos_weight": scale_pos_weight
-    }
+    }   
     evals = [(dtrain, "train"), (dval, "validation")]
+
     model = xgb.train(
         params=params,
         dtrain=dtrain,
@@ -270,6 +412,7 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
         early_stopping_rounds=50,
         verbose_eval=False
     )
+
     importance_dict = model.get_score(importance_type='gain')
     importances = pd.Series(importance_dict).sort_values(ascending=False)
     if threshold is None:
@@ -278,6 +421,7 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     else:
         selected_features = importances[importances >= threshold].index.tolist()
     dropped_features = [col for col in df.columns if col not in selected_features]
+
     if selected_features:
         df_selected = df[selected_features].copy()
         print(f"Dropped {len(dropped_features)} features")
@@ -285,6 +429,7 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     else:
         df_selected = df.copy()
         print("No features selected/dropped")
+
     top_features = importances.head(top_n)
     plt.figure(figsize=(10, 6))
     plt.barh(top_features.index[::-1], top_features.values[::-1], color='skyblue')
@@ -292,6 +437,7 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     plt.title(f"Top {top_n} XGBoost Feature Importances")
     plt.tight_layout()
     plt.show()
+
     return df_selected, selected_features
 
 def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler):
@@ -357,7 +503,7 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
         return df_cleaned
 
 
-# In[269]:
+# In[469]:
 
 
 # Load datasets
@@ -365,7 +511,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[270]:
+# In[470]:
 
 
 #summary
@@ -373,43 +519,23 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[271]:
+# In[471]:
 
 
 # Outlier Handling
-numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
-plt.figure(figsize=(15, 6))
-sns.boxplot(data=numeric_df)
-plt.title("Boxplot for All Numeric Features")
-plt.xticks(rotation=45)
-plt.show()
-
-print(df_train['age'].describe())
-
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
-
-print(df_train['age'].describe())
-
-outliers_idx = df_train['MonthlyIncome'].nlargest(3).index
-df_train = df_train.drop(index=outliers_idx)
-
-numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
-plt.figure(figsize=(15, 6))
-sns.boxplot(data=numeric_df)
-plt.title("Boxplot for All Numeric Features After Outlier Removal")
-plt.xticks(rotation=45)
-plt.show()
+df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.975, threshold_low=0.025)
 
 
-# In[272]:
+# In[472]:
 
 
 # Select targets
-df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
+df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[273]:
+# In[473]:
 
 
 # Split train/test
@@ -423,56 +549,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[274]:
+# In[474]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[275]:
+# In[475]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=1)
 
 
-# In[276]:
+# In[476]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[249]:
+# In[477]:
 
 
-# Drop correlated features here
+# Drop correlated features
 df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=9999)
 
 
-# In[250]:
+# In[478]:
 
 
-# Collapse rare categories on training data
-df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.0125)
+# Collapse rare categories
+df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.01)
 
 
-# In[251]:
+# In[479]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[252]:
+# In[480]:
 
 
-# feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=50.2, top_n=30)
+# Feature selection
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=45, top_n=50)
 
 
-# In[253]:
+# In[481]:
 
 
 # Process
@@ -486,21 +612,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[254]:
+# In[482]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[255]:
+# In[483]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[256]:
+# In[484]:
 
 
 # Encode
@@ -535,7 +661,7 @@ print("NaNs in val:", X_val.isna().sum().sum())
 print("NaNs in test:", X_test.isna().sum().sum())
 
 
-# In[257]:
+# In[485]:
 
 
 # Convert to tensors
@@ -552,7 +678,7 @@ weights_tensor = torch.tensor([class_weight_dict[int(c)] for c in y_train], dtyp
 print("Class weights:", class_weight_dict)
 
 
-# In[258]:
+# In[486]:
 
 
 # DataLoaders
@@ -567,7 +693,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[259]:
+# In[487]:
 
 
 # Model
@@ -580,14 +706,14 @@ class NN(nn.Module):
         self.bn2 = nn.BatchNorm1d(128)
         self.out = nn.Linear(128, 1)
         self.act = nn.ReLU()
-        self.drop = nn.Dropout(0.3)
+        self.drop = nn.Dropout(0.5)
 
     def forward(self, x):
         x = self.act(self.bn1(self.fc1(x)))
         x = self.drop(x)
         x = self.act(self.bn2(self.fc2(x)))
         x = self.drop(x)
-        x = self.out(x)         
+        x = self.out(x)
         return x.squeeze(1)
 
 num_input = X_train.shape[1]  
@@ -597,111 +723,122 @@ print(model)
 sum(p.numel() for p in model.parameters())
 
 
-# In[260]:
+# In[488]:
 
 
-# Loss
-class WeightedBinaryFocalLoss(nn.Module):
-    def __init__(self, alpha=0.25, gamma=2):
+class WeightedBinaryFocalLoss(nn.Module): 
+    def __init__(self, alpha=0.25, gamma=2.0, pos_weight=None):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.pos_weight = pos_weight
 
-    def forward(self, logits, targets, weights=None):
-        bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
-        pt = torch.exp(-bce_loss)
-        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
-        if weights is not None:
-            focal_loss = focal_loss * weights  
+    def forward(self, logits, targets):
+
+        bce_loss = F.binary_cross_entropy_with_logits(
+            logits, targets, reduction='none',
+            pos_weight=torch.tensor(self.pos_weight, device=logits.device) if self.pos_weight else None
+        )
+
+        p_t = torch.exp(-bce_loss)
+
+        focal_loss = (self.alpha * (1 - p_t) ** self.gamma * bce_loss)
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = WeightedBinaryFocalLoss(alpha=alpha, gamma=3)
+loss_fn = WeightedBinaryFocalLoss(alpha=alpha, gamma=2)
 
 
-# In[261]:
+# In[489]:
 
 
-optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-3)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=5, factor=0.5)
-weights_tensor = weights_tensor.to(device)
+num_runs = 3
+overall_best_val_auc = 0.0
+overall_best_model_state = None
 
-best_model_state = None
-best_auc = 0.0
-patience_counter = 0
-patience = 17 
+for run in range(num_runs):
+    print(f"\n=== Run {run + 1}/{num_runs} ===")
 
-for epoch in range(num_epochs):
-    model.train()
-    running_loss = 0.0
-    train_logits = []
-    train_labels = []
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-3)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', patience=5, factor=0.5
+    )
 
-    for Xb, yb in train_loader:
-        Xb = Xb.to(device)
-        yb = yb.to(device).float()
+    best_val_auc_this_run = 0.0
+    best_model_state_this_run = None
+    patience_counter = 0
+    max_patience = 17
 
-        optimizer.zero_grad()
-        logits = model(Xb)
-        loss = loss_fn(logits, yb)
-        loss.backward()
-        optimizer.step()
+    for epoch in range(num_epochs):
+        model.train()
+        total_train_loss = 0.0
+        train_logits, train_labels = [], []
 
-        running_loss += loss.item() * Xb.size(0)
+        for Xb, yb in train_loader:
+            Xb, yb = Xb.to(device), yb.to(device).float()
 
-        train_logits.append(logits.detach().cpu())
-        train_labels.append(yb.cpu())
-
-    train_loss = running_loss / len(train_loader.dataset)
-    train_logits = torch.cat(train_logits)
-    train_labels = torch.cat(train_labels)
-    train_probs = torch.sigmoid(train_logits).numpy()
-    train_auc = roc_auc_score(train_labels.numpy(), train_probs)
-
-    model.eval()
-    val_loss_running = 0.0
-    val_logits = []
-    val_labels = []
-
-    with torch.no_grad():
-        for Xb, yb in val_loader:
-            Xb = Xb.to(device)
-            yb = yb.to(device).float()
-
+            optimizer.zero_grad()
             logits = model(Xb)
             loss = loss_fn(logits, yb)
-            val_loss_running += loss.item() * Xb.size(0)
+            loss.backward()
+            optimizer.step()
 
-            val_logits.append(logits.cpu())
-            val_labels.append(yb.cpu())
+            total_train_loss += loss.item() * Xb.size(0)
+            train_logits.append(logits.detach().cpu())
+            train_labels.append(yb.cpu())
 
-    val_loss = val_loss_running / len(val_loader.dataset)
-    val_logits = torch.cat(val_logits)
-    val_labels = torch.cat(val_labels)
-    val_probs = torch.sigmoid(val_logits).numpy()
-    val_auc = roc_auc_score(val_labels.numpy(), val_probs)
+        train_loss = total_train_loss / len(train_loader.dataset)
+        train_logits = torch.cat(train_logits)
+        train_labels = torch.cat(train_labels)
+        train_probs = torch.sigmoid(train_logits).numpy()
+        train_auc = roc_auc_score(train_labels.numpy(), train_probs)
 
-    if val_auc > best_auc:
-        best_auc = val_auc
-        best_model_state = model.state_dict().copy()
-        patience_counter = 0
-    else:
-        patience_counter += 1
-        if patience_counter >= patience:
-            print(f"Early stopping at epoch {epoch+1}")
-            break
+        model.eval()
+        total_val_loss = 0.0
+        val_logits, val_labels = [], []
 
-    scheduler.step(val_auc)
+        with torch.no_grad():
+            for Xb, yb in val_loader:
+                Xb, yb = Xb.to(device), yb.to(device).float()
+                logits = model(Xb)
+                loss = loss_fn(logits, yb)
+                total_val_loss += loss.item() * Xb.size(0)
+                val_logits.append(logits.cpu())
+                val_labels.append(yb.cpu())
 
-    print(f"Epoch {epoch+1}/{num_epochs} | "
-          f"Train loss: {train_loss:.6f} | Train AUC: {train_auc:.4f} | "
-          f"Val loss: {val_loss:.6f} | Val AUC: {val_auc:.4f}")
+        val_loss = total_val_loss / len(val_loader.dataset)
+        val_logits = torch.cat(val_logits)
+        val_labels = torch.cat(val_labels)
+        val_probs = torch.sigmoid(val_logits).numpy()
+        val_auc = roc_auc_score(val_labels.numpy(), val_probs)
 
-model.load_state_dict(best_model_state)
-print(f"Best model (val_auc={best_auc:.4f}) restored")
+        if val_auc > best_val_auc_this_run:
+            best_val_auc_this_run = val_auc
+            best_model_state_this_run = copy.deepcopy(model.state_dict())
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= max_patience:
+                print(f"Early stopping at epoch {epoch + 1}")
+                break
+
+        scheduler.step(val_auc)
+
+        print(f"Epoch {epoch + 1}/{num_epochs} | "
+              f"Train loss: {train_loss:.6f} | Train AUC: {train_auc:.4f} | "
+              f"Val loss: {val_loss:.6f} | Val AUC: {val_auc:.4f}")
+
+    print(f"Run {run + 1} best Val AUC: {best_val_auc_this_run:.4f}")
+
+    if best_val_auc_this_run > overall_best_val_auc:
+        overall_best_val_auc = best_val_auc_this_run
+        overall_best_model_state = copy.deepcopy(best_model_state_this_run)
+
+model.load_state_dict(overall_best_model_state)
+print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[262]:
+# In[490]:
 
 
 # Evaluation
@@ -757,7 +894,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[263]:
+# In[491]:
 
 
 # Data sets
@@ -766,7 +903,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[264]:
+# In[492]:
 
 
 # Model
@@ -793,7 +930,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[265]:
+# In[493]:
 
 
 # Train
@@ -807,7 +944,7 @@ model_b = xgb.train(
 )
 
 
-# In[266]:
+# In[494]:
 
 
 # Evaluation
@@ -843,6 +980,12 @@ plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:
