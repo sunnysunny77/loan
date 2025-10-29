@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost as xgb
 import copy
+import re
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
@@ -150,7 +151,6 @@ def engineer_features(df):
     )  # ➤ total count of all delinquent events
     df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)  # ➤ any delinquency
     df_engi["MajorDelinquencyBinary"] = (df_engi["NumberOfTimes90DaysLate"] > 0).astype(int)  # ➤ serious delinquency
-    df_engi["HasMonthlyIncomeBinary"] = df_engi["MonthlyIncome"].notna().astype(int)  # ➤ income reporting flag
 
     # -------------------------------------------------------------------------
     # INCOME / DEBT RELATIONSHIPS
@@ -294,7 +294,7 @@ def drop_high_card_cols(df, threshold=50):
 
     return df_high, hc_cols_to_drop
 
-def drop_correlated(df, threshold=0.95):
+def drop_low_correlated_to_target(df, y, threshold=0.1):
 
     df_temp = df.copy()
 
@@ -302,25 +302,30 @@ def drop_correlated(df, threshold=0.95):
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
 
-    corr_matrix = df_temp.corr().abs()
+    df_temp['__target__'] = y
+    corr_with_target = df_temp.corr()['__target__'].drop('__target__')
 
-    plt.figure(figsize=(12, 10))
-    sns.heatmap(corr_matrix, cmap='coolwarm', center=0, annot=False, linewidths=0.5)
-    plt.title("Feature Correlation Matrix (Before Dropping)")
+    low_corr_cols_to_drop = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
+
+    plt.figure(figsize=(10, 6))
+    corr_with_target.sort_values(ascending=False).plot(kind='bar', color='skyblue')
+    plt.axhline(y=threshold, color='red', linestyle='--', label=f'+{threshold}')
+    plt.axhline(y=-threshold, color='red', linestyle='--', label=f'-{threshold}')
+    plt.title("Feature Correlation with Target")
+    plt.ylabel("Correlation")
+    plt.legend()
+    plt.tight_layout()
     plt.show()
 
-    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-    corr_cols_to_drop = [column for column in upper.columns if any(upper[column] > threshold)]
-
-    if corr_cols_to_drop:
-        df_corr = df.drop(columns=corr_cols_to_drop)
-        print(f"Dropped {len(corr_cols_to_drop)} highly correlated columns (>|{threshold}|).")
-        print(f"Columns dropped: {corr_cols_to_drop}")
+    if low_corr_cols_to_drop:
+        df_corr = df.drop(columns=low_corr_cols_to_drop)
+        print(f"Dropped {len(low_corr_cols_to_drop)} low-correlated features")
+        print(f"Columns dropped: {low_corr_cols_to_drop}")
     else:
         df_corr = df.copy()
-        print("No highly correlated features dropped.")
+        print("No low-correlated features dropped.")
 
-    return df_corr, corr_cols_to_drop
+    return df_corr, low_corr_cols_to_drop
 
 def collapse_rare_categories(df, threshold=0.005):
 
@@ -348,6 +353,7 @@ def impute_and_scale(df, threshold=1.0):
     df_copy = df.copy()
     numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
+
     num_imputer = None
     cat_imputer = None
     robust_scaler = None
@@ -355,30 +361,47 @@ def impute_and_scale(df, threshold=1.0):
 
     if numeric_cols:
         df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
+        for col in numeric_cols:
+            df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+
         num_imputer = SimpleImputer(strategy='median')
         df_copy[numeric_cols] = num_imputer.fit_transform(df_copy[numeric_cols])
+
     if cat_cols:
+        for col in cat_cols:
+            df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+
         cat_imputer = SimpleImputer(strategy='most_frequent')
         df_copy[cat_cols] = cat_imputer.fit_transform(df_copy[cat_cols])
+
     if numeric_cols:
         skewness = pd.DataFrame(df_copy[numeric_cols]).skew().sort_values(ascending=False)
         skewed_cols = skewness[abs(skewness) > threshold].index.tolist()
+
         if skewed_cols:
             robust_scaler = RobustScaler()
             df_copy[skewed_cols] = robust_scaler.fit_transform(df_copy[skewed_cols]).astype(np.float32)
+
         normal_cols = [c for c in numeric_cols if c not in skewed_cols]
         if normal_cols:
             std_scaler = StandardScaler()
             df_copy[normal_cols] = std_scaler.fit_transform(df_copy[normal_cols]).astype(np.float32)
+
     df_processed = df_copy.copy()
 
-    print("Imputed and scaled features")
+    print("Imputed, flagged, and scaled features")
 
     return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
 
 def select_features_xgb(df, target, threshold=None, random_state=42):
 
     df_temp = df.copy()
+
+    imputed_flag_cols = [col for col in df_temp.columns if re.match(r'^Was.+Imputed$', col)]
+    if imputed_flag_cols:
+        df_temp = df_temp.drop(columns=imputed_flag_cols, errors='ignore')
+
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
@@ -393,52 +416,55 @@ def select_features_xgb(df, target, threshold=None, random_state=42):
     scale_pos_weight = neg_count / pos_count
 
     params = {
-        "objective": "binary:logistic",       
-        "eval_metric": ["logloss", "auc"],    
-        "scale_pos_weight": scale_pos_weight, 
-        "max_depth": 5,                      
-        "min_child_weight": 2,               
-        "gamma": 1,                           
-        "subsample": 0.8,                     
-        "colsample_bytree": 0.8,              
-        "eta": 0.05,                          
-        "lambda": 1,                          
-        "alpha": 0,                          
-        "tree_method": "hist",               
-        "max_delta_step": 1                 
+        "objective": "binary:logistic",
+        "eval_metric": ["logloss", "auc"],
+        "scale_pos_weight": scale_pos_weight,
+        "max_depth": 5,
+        "min_child_weight": 2,
+        "gamma": 1,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "eta": 0.05,
+        "lambda": 1,
+        "alpha": 0,
+        "tree_method": "hist",
+        "max_delta_step": 1
     }
-
-    evals = [(dtrain, "train"), (dval, "validation")]
 
     model = xgb.train(
         params=params,
         dtrain=dtrain,
         num_boost_round=500,
-        evals=evals,
+        evals=[(dtrain, "train"), (dval, "validation")],
         early_stopping_rounds=50,
         verbose_eval=False
     )
 
     importance_dict = model.get_score(importance_type='gain')
-    all_importances = pd.Series(0, index=df.columns, dtype=float)
+    all_importances = pd.Series(0, index=df_temp.columns, dtype=float)
+
     for k, v in importance_dict.items():
         all_importances[k] = v
     all_importances = all_importances.sort_values(ascending=False)
 
     if threshold is None:
-        threshold_value = all_importances.quantile(0.75)
-        selected_features = all_importances[all_importances >= threshold_value].index.tolist()
+        selected_features = all_importances[all_importances > 0].index.tolist()
+        print(f"Using gain > 0: selected {len(selected_features)} features")
     else:
         selected_features = all_importances[all_importances >= threshold].index.tolist()
-    dropped_features = [col for col in df.columns if col not in selected_features]
+        print(f"Using gain ≥ {threshold}: selected {len(selected_features)} features")
 
-    if selected_features:
-        df_selected = df[selected_features].copy()
+    dropped_features = [col for col in df_temp.columns if col not in selected_features]
+
+    if dropped_features:
         print(f"Dropped {len(dropped_features)} features")
         print(f"Columns dropped: {dropped_features}")
     else:
-        df_selected = df.copy()
-        print("No features selected/dropped")
+        print("No features dropped")
+
+    imputed_flag_caps = [col.upper() for col in imputed_flag_cols if col in df.columns]
+    final_features = selected_features + imputed_flag_caps
+    df_selected = df.reindex(columns=final_features, fill_value=0).copy()
 
     plt.figure(figsize=(10, 6))
     plt.barh(all_importances.index[::-1], all_importances.values[::-1], color='skyblue')
@@ -447,7 +473,7 @@ def select_features_xgb(df, target, threshold=None, random_state=42):
     plt.tight_layout()
     plt.show()
 
-    return df_selected, selected_features
+    return df_selected, final_features
 
 def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler):
 
@@ -533,7 +559,7 @@ print(df_train.head(5))
 
 # Outlier Handling
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
-df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.9875, threshold_low=0.0125)
+df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.99, threshold_low=0.01)
 
 
 # In[6]:
@@ -569,7 +595,7 @@ df_engi = engineer_features(X_train)
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=1)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.50)
 
 
 # In[10]:
@@ -582,15 +608,15 @@ df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 # In[11]:
 
 
-# Drop correlated features
-df_corr, corr_cols_to_drop = drop_correlated(df_high, threshold=9999)
+# Drop low correlated features to target
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0.0034)
 
 
 # In[12]:
 
 
 # Collapse rare categories
-df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.01)
+df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.05)
 
 
 # In[13]:
@@ -604,14 +630,14 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_
 
 
 # Feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=34)
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=None)
 
 
 # In[15]:
 
 
 # Process
-all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + corr_cols_to_drop + hc_cols_to_drop
+all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + low_corr_cols_to_drop + hc_cols_to_drop
 
 X_val = engineer_features(X_val)
 X_val = transform_val_test(X_val, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
@@ -743,11 +769,11 @@ class NN(nn.Module):
             nn.Linear(self.input_dim, 144),
             nn.BatchNorm1d(144),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.3),
             nn.Linear(144, 72),
             nn.BatchNorm1d(72),
             nn.ReLU(),
-            nn.Dropout(0.5)
+            nn.Dropout(0.2)
         )
 
         self.skip_proj_main = nn.Sequential(
