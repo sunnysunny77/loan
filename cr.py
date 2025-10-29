@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost as xgb
 import copy
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score, fbeta_score
@@ -30,8 +30,11 @@ print("Using device:", device)
 
 # Constants
 lr = 5e-4
-batch_size = 128
+weight_decay = 1e-5
+batch_size = 64
 num_epochs = 75
+num_runs = 5
+max_patience = 13
 
 # pd 
 pd.set_option("display.max_rows", None)
@@ -122,7 +125,7 @@ def engineer_features(df):
 
     The goal is to extract behavioral, ratio-based, and interaction features
     from credit-related variables to better capture relationships
-    linked to default risk or repayment probability.
+    linked to default risk or repayment probability. Generated
     """
 
     df_engi = df.copy()
@@ -373,7 +376,7 @@ def impute_and_scale(df, threshold=1.0):
 
     return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
 
-def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
+def select_features_xgb(df, target, threshold=None, random_state=42):
 
     df_temp = df.copy()
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
@@ -390,18 +393,21 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     scale_pos_weight = neg_count / pos_count
 
     params = {
-        "objective": "binary:logistic",
-        "eval_metric": ["logloss", "auc"],
-        "eta": 0.03,
-        "max_depth": 4,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "gamma": 0.1,
-        "lambda": 1.5,
-        "alpha": 0.3,
-        "seed": random_state,
-        "scale_pos_weight": scale_pos_weight
-    }   
+        "objective": "binary:logistic",       
+        "eval_metric": ["logloss", "auc"],    
+        "scale_pos_weight": scale_pos_weight, 
+        "max_depth": 5,                      
+        "min_child_weight": 2,               
+        "gamma": 1,                           
+        "subsample": 0.8,                     
+        "colsample_bytree": 0.8,              
+        "eta": 0.05,                          
+        "lambda": 1,                          
+        "alpha": 0,                          
+        "tree_method": "hist",               
+        "max_delta_step": 1                 
+    }
+
     evals = [(dtrain, "train"), (dval, "validation")]
 
     model = xgb.train(
@@ -414,12 +420,16 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
     )
 
     importance_dict = model.get_score(importance_type='gain')
-    importances = pd.Series(importance_dict).sort_values(ascending=False)
+    all_importances = pd.Series(0, index=df.columns, dtype=float)
+    for k, v in importance_dict.items():
+        all_importances[k] = v
+    all_importances = all_importances.sort_values(ascending=False)
+
     if threshold is None:
-        threshold_value = importances.quantile(0.75)
-        selected_features = importances[importances >= threshold_value].index.tolist()
+        threshold_value = all_importances.quantile(0.75)
+        selected_features = all_importances[all_importances >= threshold_value].index.tolist()
     else:
-        selected_features = importances[importances >= threshold].index.tolist()
+        selected_features = all_importances[all_importances >= threshold].index.tolist()
     dropped_features = [col for col in df.columns if col not in selected_features]
 
     if selected_features:
@@ -430,11 +440,10 @@ def select_features_xgb(df, target, top_n=20, threshold=None, random_state=42):
         df_selected = df.copy()
         print("No features selected/dropped")
 
-    top_features = importances.head(top_n)
     plt.figure(figsize=(10, 6))
-    plt.barh(top_features.index[::-1], top_features.values[::-1], color='skyblue')
+    plt.barh(all_importances.index[::-1], all_importances.values[::-1], color='skyblue')
     plt.xlabel("Feature Importance (gain)")
-    plt.title(f"Top {top_n} XGBoost Feature Importances")
+    plt.title("Feature Importances")
     plt.tight_layout()
     plt.show()
 
@@ -524,7 +533,7 @@ print(df_train.head(5))
 
 # Outlier Handling
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
-df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.975, threshold_low=0.025)
+df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.9875, threshold_low=0.0125)
 
 
 # In[6]:
@@ -595,7 +604,7 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_
 
 
 # Feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=45, top_n=50)
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=34)
 
 
 # In[15]:
@@ -688,7 +697,7 @@ print("Class weights:", class_weight_dict)
 
 
 # Datasets
-class TabularDataset(torch.utils.data.Dataset):
+class TabularDataset(Dataset):
     def __init__(self, x_num, x_cat, y):
         self.x_num = x_num
         self.x_cat = x_cat
@@ -730,46 +739,48 @@ class NN(nn.Module):
         total_emb_dim = sum(emb_dims)
         self.input_dim = num_numeric + total_emb_dim
 
-        self.fc1 = nn.Linear(self.input_dim, 256)
-        self.bn1 = nn.BatchNorm1d(256)
-        self.fc2 = nn.Linear(256, 128)
-        self.bn2 = nn.BatchNorm1d(128)
-
-        self.skip_proj_main = nn.Linear(self.input_dim, 128)
-
-        self.cat_skip = nn.Sequential(
-            nn.Linear(total_emb_dim, 128),
-            nn.BatchNorm1d(128),
+        self.main = nn.Sequential(
+            nn.Linear(self.input_dim, 144),
+            nn.BatchNorm1d(144),
             nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(144, 72),
+            nn.BatchNorm1d(72),
+            nn.ReLU(),
+            nn.Dropout(0.5)
+        )
+
+        self.skip_proj_main = nn.Sequential(
+            nn.Linear(self.input_dim, 72),
             nn.Dropout(0.3)
         )
 
-        self.out = nn.Linear(128, 1)
+        self.cat_skip = nn.Sequential(
+            nn.Linear(total_emb_dim, 72),
+            nn.BatchNorm1d(72),
+            nn.ReLU(),
+            nn.Dropout(0.4)
+        )
 
-        self.act = nn.ReLU()
-        self.drop = nn.Dropout(0.5)
+        self.out = nn.Linear(72, 1)
 
     def forward(self, x_num, x_cat):
-        emb_outs = [emb(x_cat[:, i]) for i, emb in enumerate(self.emb_layers)]
-        x_cat_emb = torch.cat(emb_outs, dim=1)
+
+        x_cat_emb = torch.cat([
+            emb(x_cat[:, i]) for i, emb in enumerate(self.emb_layers)
+        ], dim=1)
         x_cat_emb = self.emb_dropout(x_cat_emb)
 
         x_num = self.bn_num(x_num)
 
         x = torch.cat([x_num, x_cat_emb], dim=1)
 
-        x1 = self.act(self.bn1(self.fc1(x)))
-        x1 = self.drop(x1)
-        x2 = self.act(self.bn2(self.fc2(x1)))
-        x2 = self.drop(x2)
+        x_main = self.main(x)
 
-        x_main_skip = self.skip_proj_main(x)
-        x_cat_skip = self.cat_skip(x_cat_emb)
+        x_skip = self.skip_proj_main(x) + self.cat_skip(x_cat_emb)
 
-        x2 = x2 + x_main_skip + x_cat_skip
-
-        out = self.out(x2)
-        return out.squeeze(1)
+        x_combined = x_main + x_skip
+        return self.out(x_combined).squeeze(1)
 
 cat_dims = [len(cat_maps[col]) for col in cat_cols]
 emb_dims = [min(50, (cat_dim + 1) // 2) for cat_dim in cat_dims]
@@ -782,7 +793,8 @@ print("Total parameters:", sum(p.numel() for p in model.parameters()))
 # In[22]:
 
 
-class FocalLoss(nn.Module): 
+# Loss
+class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2.0, pos_weight=None):
         super().__init__()
         self.alpha = alpha
@@ -790,32 +802,33 @@ class FocalLoss(nn.Module):
         self.pos_weight = pos_weight
 
     def forward(self, logits, targets):
-
         bce_loss = F.binary_cross_entropy_with_logits(
-            logits, targets, reduction='none',
-            pos_weight=torch.tensor(self.pos_weight, device=logits.device) if self.pos_weight else None
+            logits,
+            targets,
+            reduction='none',
+            pos_weight=torch.tensor(self.pos_weight, device=logits.device)
+            if self.pos_weight else None
         )
-
         p_t = torch.exp(-bce_loss)
-
-        focal_loss = (self.alpha * (1 - p_t) ** self.gamma * bce_loss)
+        focal_loss = self.alpha * (1 - p_t) ** self.gamma * bce_loss
         return focal_loss.mean()
 
+
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=2)
+loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
 # In[23]:
 
 
-num_runs = 3
+# Train
 overall_best_val_auc = 0.0
 overall_best_model_state = None
 
 for run in range(num_runs):
     print(f"\n=== Run {run + 1}/{num_runs} ===")
 
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-3)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', patience=5, factor=0.5
     )
@@ -823,7 +836,6 @@ for run in range(num_runs):
     best_val_auc_this_run = 0.0
     best_model_state_this_run = None
     patience_counter = 0
-    max_patience = 17
 
     for epoch in range(num_epochs):
         model.train()
@@ -911,7 +923,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 
-# Target defaults
+# Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
 f_beta_scores = [fbeta_score(y_val, (y_val_probs > t).astype(int), beta=2) for t in thresholds]
 best_thresh = thresholds[np.argmax(f_beta_scores)]
@@ -952,7 +964,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[29]:
+# In[25]:
 
 
 # Data sets
@@ -961,7 +973,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[30]:
+# In[26]:
 
 
 # Model
@@ -972,23 +984,22 @@ print("scale_pos_weight:", scale_pos_weight)
 
 params = {
     "objective": "binary:logistic",
-    "eval_metric": ["logloss", "auc"], 
-    "eta": 0.03,
-    "max_depth": 4,
-    "min_child_weight": 1, 
+    "eval_metric": ["logloss", "auc"],
+    "scale_pos_weight": scale_pos_weight,
+    "max_depth": 5,
+    "min_child_weight": 2,
     "subsample": 0.8,
     "colsample_bytree": 0.8,
-    "gamma": 0.1,             
-    "lambda": 1.5, 
-    "alpha": 0.3, 
-    "seed": 42,
-    "scale_pos_weight": scale_pos_weight
+    "eta": 0.05,
+    "gamma": 1,
+    "lambda": 1,
+    "alpha": 0
 }
 
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[31]:
+# In[27]:
 
 
 # Train
@@ -1002,13 +1013,13 @@ model_b = xgb.train(
 )
 
 
-# In[32]:
+# In[28]:
 
 
 # Evaluation
 y_probs = model_b.predict(dtest) 
 
-# Target defaults
+# Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
 f_beta_scores = [fbeta_score(y_test, (y_probs > t).astype(int), beta=2) for t in thresholds]
 best_thresh = thresholds[np.argmax(f_beta_scores)]
