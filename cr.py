@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost as xgb
 import copy
-import re
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
@@ -405,7 +404,7 @@ def select_features_xgb(df, target, threshold=None, random_state=42, bias_mode=T
 
     df_temp = df.copy()
 
-    imputed_flag_cols = [col for col in df_temp.columns if re.match(r'^Was.+Imputed$', col)]
+    imputed_flag_cols = [col for col in df_temp.columns if col.startswith("Was") and col.endswith("Imputed")]
     original_cols = [col for col in df_temp.columns if col not in imputed_flag_cols]
 
     cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
@@ -685,36 +684,54 @@ print(dataset_summary(X_train))
 # In[18]:
 
 
-# Encode
+# Drop imputation flags for NN input
+def drop_imputation_flags(df):
+    imputed_flag_cols = [col for col in df.columns if col.startswith("Was") and col.endswith("Imputed")]
+    df_nn = df.drop(columns=imputed_flag_cols, errors='ignore')
+    print(f"Dropped {len(imputed_flag_cols)} imputation flags for NN input")
+    return df_nn
+
+# Apply to copies for NN
+X_train_nn = drop_imputation_flags(X_train.copy())
+X_val_nn = drop_imputation_flags(X_val.copy())
+X_test_nn = drop_imputation_flags(X_test.copy())
+
+
+# In[19]:
+
+
+# Encode targets
 le = LabelEncoder()
 y_train = le.fit_transform(y_train)
 y_val = le.transform(y_val)
 y_test = le.transform(y_test)
 
-cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
+# Encode categorical columns
+cat_cols = X_train_nn.select_dtypes(include=['object', 'category']).columns.tolist()
 
 cat_maps = {
-    col: {cat: idx for idx, cat in enumerate(X_train[col].astype(str).unique())}
+    col: {cat: idx for idx, cat in enumerate(X_train_nn[col].astype(str).unique())}
     for col in cat_cols
 }
 
 for col in cat_cols:
-    X_train[col] = X_train[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_train_nn[col] = X_train_nn[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_val_nn[col] = X_val_nn[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_test_nn[col] = X_test_nn[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
-num_cols = [col for col in X_train.columns if col not in cat_cols]
+# Separate numeric and categorical columns
+num_cols = [col for col in X_train_nn.columns if col not in cat_cols]
 
-X_train_num = X_train[num_cols].astype('float32').values
-X_val_num = X_val[num_cols].astype('float32').values
-X_test_num = X_test[num_cols].astype('float32').values
+X_train_num = X_train_nn[num_cols].astype('float32').values
+X_val_num = X_val_nn[num_cols].astype('float32').values
+X_test_num = X_test_nn[num_cols].astype('float32').values
 
-X_train_cat = X_train[cat_cols].astype('int64').values
-X_val_cat = X_val[cat_cols].astype('int64').values
-X_test_cat = X_test[cat_cols].astype('int64').values
+X_train_cat = X_train_nn[cat_cols].astype('int64').values
+X_val_cat = X_val_nn[cat_cols].astype('int64').values
+X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[19]:
+# In[20]:
 
 
 # Convert to tensors
@@ -740,7 +757,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[20]:
+# In[21]:
 
 
 # Datasets
@@ -767,7 +784,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[21]:
+# In[22]:
 
 
 # Model
@@ -837,7 +854,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[22]:
+# In[23]:
 
 
 # Loss
@@ -864,7 +881,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[23]:
+# In[24]:
 
 
 # Train
@@ -953,7 +970,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[24]:
+# In[25]:
 
 
 # Evaluation
@@ -1010,16 +1027,28 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[25]:
+# In[26]:
 
 
 # Data sets
+cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
+
+cat_maps = {
+    col: {cat: idx for idx, cat in enumerate(X_train[col].astype(str).unique())}
+    for col in cat_cols
+}
+
+for col in cat_cols:
+    X_train[col] = X_train[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+
 dtrain = xgb.DMatrix(X_train, label=y_train)
 dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[26]:
+# In[27]:
 
 
 # Model
@@ -1045,7 +1074,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[27]:
+# In[28]:
 
 
 # Train
@@ -1059,7 +1088,7 @@ model_b = xgb.train(
 )
 
 
-# In[28]:
+# In[29]:
 
 
 # Evaluation
@@ -1097,14 +1126,14 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[29]:
+# In[30]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[30]:
+# In[31]:
 
 
 # Save xgb model
