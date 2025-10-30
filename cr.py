@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[29]:
 
 
 # Imports
@@ -42,7 +42,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[2]:
+# In[56]:
 
 
 def load_datasets(base_path="./"):
@@ -294,7 +294,7 @@ def drop_high_card_cols(df, threshold=50):
 
     return df_high, hc_cols_to_drop
 
-def drop_low_correlated_to_target(df, y, threshold=0.1):
+def drop_low_correlated_to_target(df, y, threshold=0.1, drop_direction=None):
 
     df_temp = df.copy()
 
@@ -305,7 +305,12 @@ def drop_low_correlated_to_target(df, y, threshold=0.1):
     df_temp['__target__'] = y
     corr_with_target = df_temp.corr()['__target__'].drop('__target__')
 
-    low_corr_cols_to_drop = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
+    if drop_direction is None:
+        dropped_cols = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
+    elif drop_direction is True:
+        dropped_cols = corr_with_target[(corr_with_target > 0) & (corr_with_target < threshold)].index.tolist()
+    else: 
+        dropped_cols = corr_with_target[(corr_with_target < 0) & (corr_with_target > -threshold)].index.tolist()
 
     plt.figure(figsize=(10, 6))
     corr_with_target.sort_values(ascending=False).plot(kind='bar', color='skyblue')
@@ -317,15 +322,15 @@ def drop_low_correlated_to_target(df, y, threshold=0.1):
     plt.tight_layout()
     plt.show()
 
-    if low_corr_cols_to_drop:
-        df_corr = df.drop(columns=low_corr_cols_to_drop)
-        print(f"Dropped {len(low_corr_cols_to_drop)} low-correlated features")
-        print(f"Columns dropped: {low_corr_cols_to_drop}")
+    if dropped_cols:
+        df_corr = df.drop(columns=dropped_cols)
+        print(f"Dropped {len(dropped_cols)} features based on correlation and drop_direction={drop_direction}")
+        print(f"Columns dropped: {dropped_cols}")
     else:
         df_corr = df.copy()
-        print("No low-correlated features dropped.")
+        print("No features dropped.")
 
-    return df_corr, low_corr_cols_to_drop
+    return df_corr, dropped_cols
 
 def collapse_rare_categories(df, threshold=0.005):
 
@@ -538,7 +543,7 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
         return df_cleaned
 
 
-# In[3]:
+# In[57]:
 
 
 # Load datasets
@@ -546,7 +551,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[58]:
 
 
 #summary
@@ -554,7 +559,7 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[5]:
+# In[59]:
 
 
 # Outlier Handling
@@ -562,7 +567,7 @@ df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.99, threshold_low=0.01)
 
 
-# In[6]:
+# In[60]:
 
 
 # Select targets
@@ -570,7 +575,7 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[7]:
+# In[61]:
 
 
 # Split train/test
@@ -584,56 +589,56 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[8]:
+# In[62]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[9]:
+# In[67]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.50)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.30)
 
 
-# In[10]:
+# In[68]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[11]:
+# In[69]:
 
 
 # Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0.0034)
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0.0067, drop_direction=False)
 
 
-# In[12]:
+# In[70]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.05)
 
 
-# In[13]:
+# In[71]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[14]:
+# In[72]:
 
 
 # Feature selection
 df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=None)
 
 
-# In[15]:
+# In[73]:
 
 
 # Process
@@ -647,21 +652,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[16]:
+# In[74]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[17]:
+# In[75]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[18]:
+# In[76]:
 
 
 # Encode
@@ -693,7 +698,7 @@ X_val_cat = X_val[cat_cols].astype('int64').values
 X_test_cat = X_test[cat_cols].astype('int64').values
 
 
-# In[19]:
+# In[77]:
 
 
 # Convert to tensors
@@ -719,7 +724,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[20]:
+# In[78]:
 
 
 # Datasets
@@ -746,7 +751,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[21]:
+# In[79]:
 
 
 # Model
@@ -816,7 +821,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[22]:
+# In[80]:
 
 
 # Loss
@@ -844,7 +849,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[23]:
+# In[81]:
 
 
 # Train
@@ -933,7 +938,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[24]:
+# In[82]:
 
 
 # Evaluation
@@ -990,7 +995,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[25]:
+# In[83]:
 
 
 # Data sets
@@ -999,7 +1004,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[26]:
+# In[84]:
 
 
 # Model
@@ -1025,7 +1030,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[27]:
+# In[85]:
 
 
 # Train
@@ -1039,7 +1044,7 @@ model_b = xgb.train(
 )
 
 
-# In[28]:
+# In[86]:
 
 
 # Evaluation
