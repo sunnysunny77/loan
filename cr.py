@@ -33,7 +33,7 @@ lr = 5e-4
 weight_decay = 1e-5
 batch_size = 64
 num_epochs = 75
-num_runs = 5
+num_runs = 3
 max_patience = 13
 
 # pd 
@@ -103,7 +103,7 @@ def outlier_handling(df, target_col, threshold_high=99, threshold_low=1):
     mask = (y_pred_proba < high_val) & (y_pred_proba > low_val)
     df_filtered = df_copy.loc[mask].reset_index(drop=True)
 
-    print(f"Removed {len(df_copy) - len(df_filtered)} extreme rows according to model probabilities")
+    print(f"Dropped: {len(df_copy) - len(df_filtered)} outlier rows")
     print(df_filtered.describe())
 
     return df_filtered
@@ -115,7 +115,7 @@ def drop_target_and_ids(df):
     target = df_copy["SeriousDlqin2yrs"]
     df_raw_features = df_copy.drop(columns=feature_cols_to_drop)
 
-    print(f"Dropped target column: {feature_cols_to_drop}")
+    print(f"Dropped cols: {feature_cols_to_drop}")
 
     return df_raw_features, target, feature_cols_to_drop
 
@@ -223,8 +223,8 @@ def engineer_features(df):
     # SUMMARY OUTPUT
     # -------------------------------------------------------------------------
     new_cols = sorted(list(set(df_engi.columns) - original_cols))
-    print(f"Engineered {len(new_cols)} new features:")
-    print(f"Columns added: {new_cols}")
+    print(f"Added: {len(new_cols)} engineer features")
+    print(f"Added cols: {new_cols}")
 
     return df_engi
 
@@ -242,11 +242,11 @@ def drop_high_missing_cols(df, threshold=0.3):
 
     if hm_cols_to_drop:
         df_drop = df.drop(columns=hm_cols_to_drop)
-        print(f"\nDropped {len(hm_cols_to_drop)} columns with missing > {threshold*100:.0f}%")
-        print(f"Columns dropped: {hm_cols_to_drop}")
+        print(f"Dropped: {len(hm_cols_to_drop)} high missing cols")
+        print(f"Dropped cols: {hm_cols_to_drop}")
     else:
         df_drop = df.copy()
-        print("\nNo columns dropped for missing threshold.")
+        print("No high missing cols dropped")
 
     return df_drop, hm_cols_to_drop
 
@@ -255,7 +255,7 @@ def drop_high_card_cols(df, threshold=50):
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
 
     if not cat_cols:
-        print("No categorical columns found.")
+        print("No high cardinality cols dropped")
         return df.copy(), []
 
     unique_counts = df[cat_cols].nunique().sort_values(ascending=False)
@@ -270,11 +270,11 @@ def drop_high_card_cols(df, threshold=50):
 
     if hc_cols_to_drop:
         df_high = df.drop(columns=hc_cols_to_drop, errors='ignore')
-        print(f"\nDropped {len(hc_cols_to_drop)} high-cardinality columns (> {threshold} unique)")
-        print(f"Columns dropped: {hc_cols_to_drop}")
+        print(f"Dropped: {len(hc_cols_to_drop)} high cardinality cols")
+        print(f"Dropped cols: {hc_cols_to_drop}")
     else:
         df_high = df.copy()
-        print("\nNo high-cardinality columns dropped.")
+        print("No high cardinality cols dropped")
 
     return df_high, hc_cols_to_drop
 
@@ -286,8 +286,8 @@ def drop_low_correlated_to_target(df, y, threshold=0.1, drop_direction=None):
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
 
-    df_temp['__target__'] = y
-    corr_with_target = df_temp.corr()['__target__'].drop('__target__')
+    df_temp['target'] = y
+    corr_with_target = df_temp.corr()['target'].drop('target')
 
     if drop_direction is None:
         # Drop all features whose absolute correlation is below threshold
@@ -311,11 +311,11 @@ def drop_low_correlated_to_target(df, y, threshold=0.1, drop_direction=None):
 
     if dropped_cols:
         df_corr = df.drop(columns=dropped_cols)
-        print(f"Dropped {len(dropped_cols)} features based on correlation and drop_direction={drop_direction}")
-        print(f"Columns dropped: {dropped_cols}")
+        print(f"Dropped: {len(dropped_cols)} low correlated to target cols")
+        print(f"Dropped cols: {dropped_cols}")
     else:
         df_corr = df.copy()
-        print("No features dropped.")
+        print("No low correlated to target cols dropped")
 
     return df_corr, dropped_cols
 
@@ -326,8 +326,8 @@ def collapse_rare_categories(df, threshold=0.005):
     rare_maps = {}
 
     if not cat_cols:
-        print("No categorical columns found.")
-        return df_copy, None
+        print("No rare categories cols collapsed")
+        return df_copy, []
 
     for col in cat_cols:
         freqs = df_copy[col].value_counts(normalize=True).sort_values(ascending=False)
@@ -335,7 +335,7 @@ def collapse_rare_categories(df, threshold=0.005):
             'Count': df_copy[col].value_counts(),
             'Percent': (freqs * 100).round(2)
         })
-        print(f"\nColumn: {col}")
+        print(f"Column: {col}")
         print(freq_summary.to_string())
 
         rare_cats = freqs[freqs < threshold].index
@@ -343,14 +343,11 @@ def collapse_rare_categories(df, threshold=0.005):
         if len(rare_cats) > 0:
             df_copy[col] = df_copy[col].astype('object').replace(rare_cats, 'Other')
             rare_maps[col] = set(rare_cats)
-            print(f"Collapsed {len(rare_cats)} rare categories in column '{col}' (< {threshold*100:.2f}%)")
+            print(f"Collapsed: {len(rare_cats)} rare categories")
             print(f"Categories collapsed: {list(rare_cats)}")
         else:
-            print(f"No rare categories collapsed in '{col}'.")
-
-    if not rare_maps:
-        print("\nNo rare categories collapsed in any column.")
-        rare_maps = None
+            print("No rare categories cols collapsed")
+            rare_maps = []
 
     return df_copy, rare_maps
 
@@ -414,6 +411,10 @@ def select_features_xgb(df, target, threshold=None, random_state=42, bias_mode=T
     X_train, X_val, y_train, y_val = train_test_split(
         df_temp, target, test_size=0.2, random_state=random_state, stratify=target
     )
+
+    X_train = X_train.astype(np.float32)
+    X_val = X_val.astype(np.float32)
+
     dtrain = xgb.DMatrix(X_train, label=y_train)
     dval = xgb.DMatrix(X_val, label=y_val)
 
@@ -485,13 +486,13 @@ def select_features_xgb(df, target, threshold=None, random_state=42, bias_mode=T
     plt.show()
 
     if dropped_original or dropped_flags:
-        print(f"Dropped {len(dropped_original)} original features and {len(dropped_flags)} imputation flags")
+        print(f"Dropped: {len(dropped_original)} select features cols")
         if dropped_original:
-            print(f"Columns dropped: {dropped_original}")
+            print(f"Dropped cols: {dropped_original}")
         if dropped_flags:
-            print(f"Flags dropped: {dropped_flags}")
+            print(f"Dropped Flags cols: {dropped_flags}")
     else:
-        print("No features or flags dropped.")
+        print("No select features cols or flag cols dropped")
 
     return df_selected, final_features
 
@@ -578,8 +579,29 @@ print(df_train.head(5))
 
 
 # Outlier Handling
-df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
-df_filtered = outlier_handling(df_train, target_col="SeriousDlqin2yrs", threshold_high=99.99, threshold_low=0.01)
+numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
+plt.figure(figsize=(15, 6))
+sns.boxplot(data=numeric_df)
+plt.title("Boxplot for All Numeric Features")
+plt.xticks(rotation=45)
+plt.show()
+
+
+df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
+df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True)  
+df_filtered = outlier_handling(
+    df_train,
+    target_col="SeriousDlqin2yrs",
+    threshold_high=99.99,
+    threshold_low=0.01
+)
+
+numeric_df = df_filtered.select_dtypes(include=['int64', 'float64'])
+plt.figure(figsize=(15, 6))
+sns.boxplot(data=numeric_df)
+plt.title("Boxplot for All Numeric Features")
+plt.xticks(rotation=45)
+plt.show()
 
 
 # In[6]:
@@ -615,7 +637,7 @@ df_engi = engineer_features(X_train)
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.42)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.20)
 
 
 # In[10]:
@@ -629,7 +651,7 @@ df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
 # Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0.0030, drop_direction=None)
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0.00125, drop_direction=None)
 
 
 # In[12]:
@@ -650,7 +672,7 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_
 
 
 # Feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=5.67, bias_mode=None) 
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=31.5, bias_mode=False) 
 
 
 # In[15]:
@@ -684,42 +706,44 @@ print(dataset_summary(X_train))
 # In[18]:
 
 
-# Drop imputation flags for NN input
-def drop_imputation_flags(df):
-    imputed_flag_cols = [col for col in df.columns if col.startswith("Was") and col.endswith("Imputed")]
-    df_nn = df.drop(columns=imputed_flag_cols, errors='ignore')
-    print(f"Dropped {len(imputed_flag_cols)} imputation flags for NN input")
-    return df_nn
-
-# Apply to copies for NN
-X_train_nn = drop_imputation_flags(X_train.copy())
-X_val_nn = drop_imputation_flags(X_val.copy())
-X_test_nn = drop_imputation_flags(X_test.copy())
-
-
-# In[19]:
-
-
-# Encode targets
+# Encode
 le = LabelEncoder()
 y_train = le.fit_transform(y_train)
 y_val = le.transform(y_val)
 y_test = le.transform(y_test)
 
-# Encode categorical columns
-cat_cols = X_train_nn.select_dtypes(include=['object', 'category']).columns.tolist()
+cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
 
 cat_maps = {
-    col: {cat: idx for idx, cat in enumerate(X_train_nn[col].astype(str).unique())}
+    col: {cat: idx for idx, cat in enumerate(X_train[col].astype(str).unique())}
     for col in cat_cols
 }
 
 for col in cat_cols:
-    X_train_nn[col] = X_train_nn[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-    X_val_nn[col] = X_val_nn[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-    X_test_nn[col] = X_test_nn[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_train[col] = X_train[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
+    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
-# Separate numeric and categorical columns
+
+# In[19]:
+
+
+# Drop imputation flags for NN input
+def drop_imputation_flags(df):
+    imputed_flag_cols = [col for col in df.columns if col.startswith("Was") and col.endswith("Imputed")]
+    df_nn = df.drop(columns=imputed_flag_cols, errors='ignore')
+    print(f"Dropped: {len(imputed_flag_cols)} imputation flags")
+    return df_nn
+
+X_train_nn = drop_imputation_flags(X_train.copy())
+X_val_nn = drop_imputation_flags(X_val.copy())
+X_test_nn = drop_imputation_flags(X_test.copy())
+
+
+# In[20]:
+
+
+# Separate numeric and categorical form embeding and cast to float32 and int64 
 num_cols = [col for col in X_train_nn.columns if col not in cat_cols]
 
 X_train_num = X_train_nn[num_cols].astype('float32').values
@@ -731,7 +755,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[20]:
+# In[21]:
 
 
 # Convert to tensors
@@ -757,7 +781,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[21]:
+# In[22]:
 
 
 # Datasets
@@ -784,7 +808,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[22]:
+# In[23]:
 
 
 # Model
@@ -854,7 +878,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[23]:
+# In[24]:
 
 
 # Loss
@@ -881,7 +905,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[24]:
+# In[25]:
 
 
 # Train
@@ -970,7 +994,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[25]:
+# In[26]:
 
 
 # Evaluation
@@ -1027,28 +1051,25 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[26]:
+# In[27]:
+
+
+# Cast to float32 and int64
+X_train = X_train.astype(np.float32)
+X_val = X_val.astype(np.float32)
+X_test = X_test.astype(np.float32)
+
+
+# In[28]:
 
 
 # Data sets
-cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
-
-cat_maps = {
-    col: {cat: idx for idx, cat in enumerate(X_train[col].astype(str).unique())}
-    for col in cat_cols
-}
-
-for col in cat_cols:
-    X_train[col] = X_train[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-
 dtrain = xgb.DMatrix(X_train, label=y_train)
 dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[27]:
+# In[29]:
 
 
 # Model
@@ -1074,7 +1095,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[28]:
+# In[30]:
 
 
 # Train
@@ -1088,7 +1109,7 @@ model_b = xgb.train(
 )
 
 
-# In[29]:
+# In[31]:
 
 
 # Evaluation
@@ -1126,14 +1147,14 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[30]:
+# In[32]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[31]:
+# In[33]:
 
 
 # Save xgb model
