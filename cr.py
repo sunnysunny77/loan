@@ -23,6 +23,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.feature_selection import RFE
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,9 +32,9 @@ print("Using device:", device)
 # Constants
 lr = 5e-4
 weight_decay = 1e-5
-batch_size = 64
+batch_size = 32
 num_epochs = 75
-num_runs = 3
+num_runs = 2
 max_patience = 13
 
 # pd 
@@ -120,18 +121,8 @@ def drop_target_and_ids(df):
     return df_raw_features, target, feature_cols_to_drop
 
 def engineer_features(df):
-    """
-    Create new engineered features for credit risk modeling.
-    """
 
     df_engi = df.copy()
-    original_cols = set(df_engi.columns)
-
-    # -------------------------------------------------------------------------
-    # AGE CAPPING
-    # -------------------------------------------------------------------------
-    df_engi["age"] = np.minimum(df_engi["age"], 100)
-    df_engi["age_capped"] = df_engi["age"]
 
     # -------------------------------------------------------------------------
     # DELINQUENCY-RELATED FEATURES
@@ -152,7 +143,6 @@ def engineer_features(df):
         df_engi["NumberOfOpenCreditLinesAndLoans"] /
         df_engi["NumberRealEstateLoansOrLines"].replace(0, np.nan)
     )
-    df_engi["Log_MonthlyIncome"] = np.log1p(df_engi["MonthlyIncome"])
     df_engi["UtilToAgeRatio"] = (
         df_engi["RevolvingUtilizationOfUnsecuredLines"] /
         df_engi["age"].replace(0, np.nan)
@@ -184,15 +174,7 @@ def engineer_features(df):
     # -------------------------------------------------------------------------
     # RATIO AND INTERACTION FEATURES
     # -------------------------------------------------------------------------
-    df_engi["DebtRatioPerAge"] = df_engi["DebtRatio"] / df_engi["age"].replace(0, np.nan)
     df_engi["MonthlyDebtPerIncome"] = df_engi["MonthlyDebtAmount"] / df_engi["MonthlyIncome"].replace(0, np.nan)
-    df_engi["PastDuePerCreditLine"] = (
-        df_engi["TotalPastDue"] /
-        (df_engi["NumberOfOpenCreditLinesAndLoans"] + df_engi["NumberRealEstateLoansOrLines"]).replace(0, np.nan)
-    )
-    df_engi["UtilTimesDebtRatio"] = (
-        df_engi["RevolvingUtilizationOfUnsecuredLines"] * df_engi["DebtRatio"]
-    )
     df_engi["AgeTimesIncome"] = df_engi["age"] * df_engi["MonthlyIncome"]
 
     # -------------------------------------------------------------------------
@@ -211,20 +193,13 @@ def engineer_features(df):
     # -------------------------------------------------------------------------
     # ADVANCED INTERACTIONS
     # -------------------------------------------------------------------------
-    df_engi["DebtTimesUtil"] = df_engi["DebtRatio"] * df_engi["RevolvingUtilizationOfUnsecuredLines"]
     df_engi["IncomePerOpenCredit"] = (
         df_engi["MonthlyIncome"] /
         df_engi["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
     )
     df_engi["PastDuePerAge"] = df_engi["TotalPastDue"] / df_engi["age"].replace(0, np.nan)
-    df_engi["DebtPerCreditTimesAge"] = df_engi["DebtRatioPerAge"] * df_engi["NumberOfOpenCreditLinesAndLoans"]
 
-    # -------------------------------------------------------------------------
-    # SUMMARY OUTPUT
-    # -------------------------------------------------------------------------
-    new_cols = sorted(list(set(df_engi.columns) - original_cols))
-    print(f"Added: {len(new_cols)} engineer features")
-    print(f"Added cols: {new_cols}")
+    print(f"Added engineer features")
 
     return df_engi
 
@@ -277,47 +252,6 @@ def drop_high_card_cols(df, threshold=50):
         print("No high cardinality cols dropped")
 
     return df_high, hc_cols_to_drop
-
-def drop_low_correlated_to_target(df, y, threshold=0.34, bias_mode=None):
-
-    df_temp = df.copy()
-
-    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
-    for col in cat_cols:
-        df_temp[col] = df_temp[col].astype('category').cat.codes
-
-    df_temp['target'] = y
-    corr_with_target = df_temp.corr()['target'].drop('target')
-
-    if bias_mode is None:
-        # Drop all features whose absolute correlation is below threshold
-        dropped_cols = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
-    elif bias_mode is True:
-        # Drop only weak positively correlated features (0 < corr < threshold)
-        dropped_cols = corr_with_target[(corr_with_target > 0) & (corr_with_target < threshold)].index.tolist()
-    else: 
-        # Drop only weak negatively correlated features (-threshold < corr < 0)
-        dropped_cols = corr_with_target[(corr_with_target < 0) & (corr_with_target > -threshold)].index.tolist()
-
-    plt.figure(figsize=(10, 6))
-    corr_with_target.sort_values(ascending=False).plot(kind='bar', color='skyblue')
-    plt.axhline(y=threshold, color='red', linestyle='--', label=f'+{threshold}')
-    plt.axhline(y=-threshold, color='red', linestyle='--', label=f'-{threshold}')
-    plt.title("Feature Correlation with Target")
-    plt.ylabel("Correlation")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    if dropped_cols:
-        df_corr = df.drop(columns=dropped_cols)
-        print(f"Dropped: {len(dropped_cols)} low correlated to target cols")
-        print(f"Dropped cols: {dropped_cols}")
-    else:
-        df_corr = df.copy()
-        print("No low correlated to target cols dropped")
-
-    return df_corr, dropped_cols
 
 def collapse_rare_categories(df, threshold=0.005):
 
@@ -397,102 +331,119 @@ def impute_and_scale(df, threshold=1.0):
 
     return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
 
-def select_features_xgb(df, target, threshold=None, random_state=42, bias_mode=True):
+def plot_feature_importance(df, target, random_state=42, bias_mode=None):
+
+    df_temp = df.copy()
+
+    imputed_flag_cols = [col for col in df_temp.columns if col.startswith("Was") and col.endswith("Imputed")]
+    feature_cols = [c for c in df_temp.columns if c not in imputed_flag_cols]
+
+    cat_cols = df_temp[feature_cols].select_dtypes(include=['object', 'category']).columns.tolist()
+    for col in cat_cols:
+        df_temp[col] = df_temp[col].astype('category').cat.codes
+
+    X_train, X_val, y_train, y_val = train_test_split(
+        df_temp[feature_cols], target, test_size=0.2, random_state=random_state, stratify=target
+    )
+
+    X_train = X_train.astype(np.float32)
+    X_val = X_val.astype(np.float32)
+
+    neg_count = sum(y_train == 0)
+    pos_count = sum(y_train == 1)
+
+    if bias_mode == True:
+        scale_pos_weight = pos_count / neg_count
+    elif bias_mode == False:
+        scale_pos_weight = neg_count / pos_count
+    else:
+        scale_pos_weight = 1
+
+    model = xgb.XGBClassifier(
+        objective="binary:logistic",
+        eval_metric=["auc"],
+        scale_pos_weight=scale_pos_weight,  
+        learning_rate=0.05,                
+        max_depth=6,                        
+        min_child_weight=5,                 
+        subsample=0.8,                   
+        colsample_bytree=0.7,           
+        gamma=1,                         
+        reg_alpha=0.1,                      
+        reg_lambda=1.0,                 
+        n_estimators=500,          
+    )
+
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+
+    importance_dict = model.get_booster().get_score(importance_type='gain')
+    all_importances = pd.Series(0, index=feature_cols, dtype=float)
+    for k, v in importance_dict.items():
+        all_importances[k] = v
+    all_importances = all_importances.sort_values(ascending=False)
+
+    plt.figure(figsize=(10, 6))
+    plt.barh(all_importances.index[::-1], all_importances.values[::-1], color='skyblue')
+    plt.xlabel("Feature Importance (gain)")
+    plt.title("XGBoost Feature Importances")
+    plt.tight_layout()
+    plt.show()
+
+def select_features(df, target, n_features_to_select=20, random_state=42, bias_mode=None):
 
     df_temp = df.copy()
 
     imputed_flag_cols = [col for col in df_temp.columns if col.startswith("Was") and col.endswith("Imputed")]
     original_cols = [col for col in df_temp.columns if col not in imputed_flag_cols]
 
-    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
+    cat_cols = df_temp[original_cols].select_dtypes(include=['object', 'category']).columns.tolist()
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
 
-    X_train, X_val, y_train, y_val = train_test_split(
-        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
+    X_train_full, X_val_full, y_train, y_val = train_test_split(
+        df_temp[original_cols], target, test_size=0.2, random_state=random_state, stratify=target
     )
 
-    X_train = X_train.astype(np.float32)
-    X_val = X_val.astype(np.float32)
-
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval = xgb.DMatrix(X_val, label=y_val)
+    X_train = X_train_full.drop(columns=cat_cols).astype(np.float32)
+    X_val = X_val_full.drop(columns=cat_cols).astype(np.float32)
 
     neg_count = sum(y_train == 0)
     pos_count = sum(y_train == 1)
 
     if bias_mode is True:
-        scale_pos_weight = pos_count / neg_count  # majority bias
+        scale_pos_weight = pos_count / neg_count
     elif bias_mode is False:
-        scale_pos_weight = neg_count / pos_count  # minority bias
+        scale_pos_weight = neg_count / pos_count
     else:
         scale_pos_weight = 1
 
-    params = {
-        "objective": "binary:logistic",
-        "eval_metric": ["logloss", "auc"],
-        "scale_pos_weight": scale_pos_weight,
-        "max_depth": 5,
-        "min_child_weight": 2,
-        "gamma": 1,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "eta": 0.05,
-        "lambda": 1,
-        "alpha": 0,
-        "tree_method": "hist",
-        "max_delta_step": 1
-    }
-
-    model = xgb.train(
-        params=params,
-        dtrain=dtrain,
-        num_boost_round=500,
-        evals=[(dtrain, "train"), (dval, "validation")],
-        early_stopping_rounds=50,
-        verbose_eval=False
+    base_model = xgb.XGBClassifier(
+        objective="binary:logistic",
+        eval_metric=["auc"],
+        scale_pos_weight=scale_pos_weight,
+        learning_rate=0.05,
+        max_depth=6,
+        min_child_weight=5,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        gamma=1,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        n_estimators=500
     )
 
-    importance_dict = model.get_score(importance_type='gain')
-    all_importances = pd.Series(0, index=df_temp.columns, dtype=float)
-    for k, v in importance_dict.items():
-        all_importances[k] = v
-    all_importances = all_importances.sort_values(ascending=False)
+    selector = RFE(estimator=base_model, n_features_to_select=n_features_to_select, step=1)
+    selector.fit(X_train, y_train)
 
-    if threshold is None:
-        selected_features = all_importances[all_importances > 0].index.tolist()
-    else:
-        selected_features = all_importances[all_importances >= threshold].index.tolist()
+    selected_features = X_train.columns[selector.support_].tolist()
+    dropped_features = [col for col in X_train.columns if col not in selected_features]    
+    selected_flags = [f'Was{col}Imputed' for col in selected_features if f'Was{col}Imputed' in df.columns]
 
-    selected_original = [c for c in selected_features if c in original_cols]
-    selected_flags = [c for c in selected_features if c in imputed_flag_cols]
-
-    dropped_original = [c for c in original_cols if c not in selected_original]
-
-    dropped_flags = [f'Was{c}Imputed' for c in dropped_original if f'Was{c}Imputed' in df.columns]
-
-    remaining_flags = [f for f in imputed_flag_cols if f not in dropped_flags]
-
-    final_features = selected_original + remaining_flags
-
+    final_features = selected_features + selected_flags + [col for col in cat_cols if col in df.columns]
     df_selected = df.reindex(columns=final_features, fill_value=0).copy()
 
-    plot_importances = all_importances.drop(labels=imputed_flag_cols, errors='ignore')
-    plt.figure(figsize=(10, 6))
-    plt.barh(plot_importances.index[::-1], plot_importances.values[::-1], color='skyblue')
-    plt.xlabel("Feature Importance (gain)")
-    plt.title("Feature Importances")
-    plt.tight_layout()
-    plt.show()
-
-    if dropped_original or dropped_flags:
-        print(f"Dropped: {len(dropped_original)} select features cols")
-        if dropped_original:
-            print(f"Dropped cols: {dropped_original}")
-        if dropped_flags:
-            print(f"Dropped Flags cols: {dropped_flags}")
-    else:
-        print("No select features cols or flag cols dropped")
+    print(f"Dropped: {len(dropped_features)} select_features")
+    print(f"Dropped cols: {dropped_features}")
 
     return df_selected, final_features
 
@@ -558,72 +509,6 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
     else:
         return df_cleaned
 
-def plot_feature_importance(df, target, random_state=42, bias_mode=True):
-
-    df_temp = df.copy()
-
-    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
-    for col in cat_cols:
-        df_temp[col] = df_temp[col].astype('category').cat.codes
-
-    X_train, X_val, y_train, y_val = train_test_split(
-        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
-    )
-
-    X_train = X_train.astype(np.float32)
-    X_val = X_val.astype(np.float32)
-
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval = xgb.DMatrix(X_val, label=y_val)
-
-    neg_count = sum(y_train == 0)
-    pos_count = sum(y_train == 1)
-
-    if bias_mode is True:
-        scale_pos_weight = pos_count / neg_count  # majority bias
-    elif bias_mode is False:
-        scale_pos_weight = neg_count / pos_count  # minority bias
-    else:
-        scale_pos_weight = 1
-
-    params = {
-        "objective": "binary:logistic",
-        "eval_metric": ["logloss", "auc"],
-        "scale_pos_weight": scale_pos_weight,
-        "max_depth": 5,
-        "min_child_weight": 2,
-        "gamma": 1,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-        "eta": 0.05,
-        "lambda": 1,
-        "alpha": 0,
-        "tree_method": "hist",
-        "max_delta_step": 1
-    }
-
-    model = xgb.train(
-        params=params,
-        dtrain=dtrain,
-        num_boost_round=500,
-        evals=[(dtrain, "train"), (dval, "validation")],
-        early_stopping_rounds=50,
-        verbose_eval=False
-    )
-
-    importance_dict = model.get_score(importance_type='gain')
-    all_importances = pd.Series(0, index=df_temp.columns, dtype=float)
-    for k, v in importance_dict.items():
-        all_importances[k] = v
-    all_importances = all_importances.sort_values(ascending=False)
-
-    plt.figure(figsize=(10, 6))
-    plt.barh(all_importances.index[::-1], all_importances.values[::-1], color='skyblue')
-    plt.xlabel("Feature Importance (gain)")
-    plt.title("XGBoost Feature Importances")
-    plt.tight_layout()
-    plt.show()
-
 
 # In[3]:
 
@@ -641,18 +526,10 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[5]:
+# In[36]:
 
 
 # Outlier Handling
-numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
-plt.figure(figsize=(15, 6))
-sns.boxplot(data=numeric_df)
-plt.title("Boxplot for All Numeric Features")
-plt.xticks(rotation=45)
-plt.show()
-
-
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
 
 df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True) 
@@ -660,8 +537,8 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_filtered = outlier_handling(
     df_train,
     target_col="SeriousDlqin2yrs",
-    threshold_high = 99.993,
-    threshold_low = 0.007
+    threshold_high = 99.992,
+    threshold_low = 0.008
 )
 
 numeric_df = df_filtered.select_dtypes(include=['int64', 'float64'])
@@ -672,7 +549,7 @@ plt.xticks(rotation=45)
 plt.show()
 
 
-# In[6]:
+# In[37]:
 
 
 # Select targets
@@ -680,7 +557,7 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[7]:
+# In[38]:
 
 
 # Split train/test
@@ -694,66 +571,60 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[8]:
+# In[39]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[9]:
+# In[40]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.20)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=50)
 
 
-# In[10]:
-
-
-plot_feature_importance(df_drop, y_train, bias_mode=False)
-
-
-# In[11]:
+# In[41]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[12]:
-
-
-# Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0, bias_mode=None)
-
-
-# In[13]:
+# In[42]:
 
 
 # Collapse rare categories
-df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.067)
+df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
-# In[14]:
+# In[43]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[15]:
+# In[44]:
 
 
-# Feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=None, bias_mode=None) 
+# Plot features
+plot_feature_importance(df_processed, y_train, bias_mode=None)
 
 
-# In[16]:
+# In[45]:
+
+
+# Numeric Feature selection
+df_selected, selected_features = select_features(df_processed, y_train, n_features_to_select=21, bias_mode=None) 
+
+
+# In[46]:
 
 
 # Process
-all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + low_corr_cols_to_drop + hc_cols_to_drop
+all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop
 
 X_val = engineer_features(X_val)
 X_val = transform_val_test(X_val, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
@@ -763,21 +634,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[17]:
+# In[47]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[18]:
+# In[48]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[19]:
+# In[49]:
 
 
 # Encode
@@ -799,7 +670,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[20]:
+# In[50]:
 
 
 # Drop imputation flags for NN input
@@ -814,7 +685,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[21]:
+# In[51]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -829,7 +700,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[22]:
+# In[52]:
 
 
 # Convert to tensors
@@ -855,7 +726,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[53]:
 
 
 # Datasets
@@ -882,7 +753,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[54]:
 
 
 # Model
@@ -952,7 +823,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[55]:
 
 
 # Loss
@@ -979,7 +850,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[26]:
+# In[56]:
 
 
 # Train
@@ -1068,7 +939,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[27]:
+# In[57]:
 
 
 # Evaluation
@@ -1117,77 +988,58 @@ for i, class_name in enumerate(target_names):
     print(f"Accuracy for class '{class_name}': {per_class_acc[i]*100:.2f}%")
 
 plt.figure(figsize=(6,5))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=target_names, yticklabels=target_names)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=target_names, yticklabels=target_names)
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[28]:
+# In[58]:
 
 
-# Cast to float32 and int64
+# Cast to float32 
 X_train = X_train.astype(np.float32)
 X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[29]:
-
-
-# Data sets
-dtrain = xgb.DMatrix(X_train, label=y_train)
-dval = xgb.DMatrix(X_val, label=y_val)
-dtest = xgb.DMatrix(X_test, label=y_test) 
-
-
-# In[30]:
+# In[59]:
 
 
 # Model
 neg_count = sum(y_train == 0)
 pos_count = sum(y_train == 1)
 scale_pos_weight = neg_count / pos_count
-print("scale_pos_weight:", scale_pos_weight)
 
-params = {
-    "objective": "binary:logistic",
-    "eval_metric": ["logloss", "auc"],
-    "scale_pos_weight": scale_pos_weight,
-    "max_depth": 5,
-    "min_child_weight": 2,
-    "subsample": 0.8,
-    "colsample_bytree": 0.8,
-    "eta": 0.05,
-    "gamma": 1,
-    "lambda": 1,
-    "alpha": 0
-}
-
-evals = [(dtrain, "train"), (dval, "validation")]
-
-
-# In[31]:
-
-
-# Train
-model_b = xgb.train(
-    params=params,
-    dtrain=dtrain,
-    num_boost_round=500,
-    evals=evals,
-    early_stopping_rounds=50,
-    verbose_eval=50
+model_b = xgb.XGBClassifier(
+    objective="binary:logistic",
+    eval_metric=["auc"],
+    scale_pos_weight=scale_pos_weight,  
+    learning_rate=0.05,                
+    max_depth=6,                        
+    min_child_weight=5,                 
+    subsample=0.8,                   
+    colsample_bytree=0.7,           
+    gamma=1,                         
+    reg_alpha=0.1,                      
+    reg_lambda=1.0,                 
+    n_estimators=500,                    
 )
 
 
-# In[ ]:
+# In[60]:
+
+
+# Train
+model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
+
+
+# In[61]:
 
 
 # Evaluation
-y_probs = model_b.predict(dtest) 
+y_probs = model_b.predict_proba(X_test)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
@@ -1213,22 +1065,21 @@ for i, class_name in enumerate(target_names):
     print(f"Accuracy for class '{class_name}': {per_class_acc[i]*100:.2f}%")
 
 plt.figure(figsize=(6,5))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=target_names, yticklabels=target_names)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=target_names, yticklabels=target_names)
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[ ]:
+# In[62]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[ ]:
+# In[63]:
 
 
 # Save xgb model
