@@ -278,7 +278,7 @@ def drop_high_card_cols(df, threshold=50):
 
     return df_high, hc_cols_to_drop
 
-def drop_low_correlated_to_target(df, y, threshold=0.1, drop_direction=None):
+def drop_low_correlated_to_target(df, y, threshold=0.34, bias_mode=None):
 
     df_temp = df.copy()
 
@@ -289,10 +289,10 @@ def drop_low_correlated_to_target(df, y, threshold=0.1, drop_direction=None):
     df_temp['target'] = y
     corr_with_target = df_temp.corr()['target'].drop('target')
 
-    if drop_direction is None:
+    if bias_mode is None:
         # Drop all features whose absolute correlation is below threshold
         dropped_cols = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
-    elif drop_direction is True:
+    elif bias_mode is True:
         # Drop only weak positively correlated features (0 < corr < threshold)
         dropped_cols = corr_with_target[(corr_with_target > 0) & (corr_with_target < threshold)].index.tolist()
     else: 
@@ -558,6 +558,72 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
     else:
         return df_cleaned
 
+def plot_feature_importance(df, target, random_state=42, bias_mode=True):
+
+    df_temp = df.copy()
+
+    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
+    for col in cat_cols:
+        df_temp[col] = df_temp[col].astype('category').cat.codes
+
+    X_train, X_val, y_train, y_val = train_test_split(
+        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
+    )
+
+    X_train = X_train.astype(np.float32)
+    X_val = X_val.astype(np.float32)
+
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dval = xgb.DMatrix(X_val, label=y_val)
+
+    neg_count = sum(y_train == 0)
+    pos_count = sum(y_train == 1)
+
+    if bias_mode is True:
+        scale_pos_weight = pos_count / neg_count  # majority bias
+    elif bias_mode is False:
+        scale_pos_weight = neg_count / pos_count  # minority bias
+    else:
+        scale_pos_weight = 1
+
+    params = {
+        "objective": "binary:logistic",
+        "eval_metric": ["logloss", "auc"],
+        "scale_pos_weight": scale_pos_weight,
+        "max_depth": 5,
+        "min_child_weight": 2,
+        "gamma": 1,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "eta": 0.05,
+        "lambda": 1,
+        "alpha": 0,
+        "tree_method": "hist",
+        "max_delta_step": 1
+    }
+
+    model = xgb.train(
+        params=params,
+        dtrain=dtrain,
+        num_boost_round=500,
+        evals=[(dtrain, "train"), (dval, "validation")],
+        early_stopping_rounds=50,
+        verbose_eval=False
+    )
+
+    importance_dict = model.get_score(importance_type='gain')
+    all_importances = pd.Series(0, index=df_temp.columns, dtype=float)
+    for k, v in importance_dict.items():
+        all_importances[k] = v
+    all_importances = all_importances.sort_values(ascending=False)
+
+    plt.figure(figsize=(10, 6))
+    plt.barh(all_importances.index[::-1], all_importances.values[::-1], color='skyblue')
+    plt.xlabel("Feature Importance (gain)")
+    plt.title("XGBoost Feature Importances")
+    plt.tight_layout()
+    plt.show()
+
 
 # In[3]:
 
@@ -588,12 +654,14 @@ plt.show()
 
 
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
-df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True)  
+
+df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True) 
+
 df_filtered = outlier_handling(
     df_train,
     target_col="SeriousDlqin2yrs",
-    threshold_high=99.99,
-    threshold_low=0.01
+    threshold_high = 99.993,
+    threshold_low = 0.007
 )
 
 numeric_df = df_filtered.select_dtypes(include=['int64', 'float64'])
@@ -643,39 +711,45 @@ df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.20)
 # In[10]:
 
 
-# Drop high card
-df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
+plot_feature_importance(df_drop, y_train, bias_mode=False)
 
 
 # In[11]:
 
 
-# Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0.00125, drop_direction=None)
+# Drop high card
+df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
 # In[12]:
+
+
+# Drop low correlated features to target
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_high, y_train, threshold=0, bias_mode=None)
+
+
+# In[13]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_corr, threshold=0.067)
 
 
-# In[13]:
+# In[14]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
 
 
-# In[14]:
+# In[15]:
 
 
 # Feature selection
-df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=31.5, bias_mode=False) 
+df_selected, selected_features = select_features_xgb(df_processed, y_train, threshold=None, bias_mode=None) 
 
 
-# In[15]:
+# In[16]:
 
 
 # Process
@@ -689,21 +763,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_ma
 X_train = df_selected.copy()
 
 
-# In[16]:
+# In[17]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[17]:
+# In[18]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[18]:
+# In[19]:
 
 
 # Encode
@@ -725,7 +799,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[19]:
+# In[20]:
 
 
 # Drop imputation flags for NN input
@@ -740,7 +814,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[20]:
+# In[21]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -755,7 +829,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[21]:
+# In[22]:
 
 
 # Convert to tensors
@@ -781,7 +855,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[22]:
+# In[23]:
 
 
 # Datasets
@@ -808,7 +882,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[23]:
+# In[24]:
 
 
 # Model
@@ -878,7 +952,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[24]:
+# In[25]:
 
 
 # Loss
@@ -905,7 +979,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[25]:
+# In[26]:
 
 
 # Train
@@ -994,7 +1068,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[26]:
+# In[27]:
 
 
 # Evaluation
@@ -1051,7 +1125,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[27]:
+# In[28]:
 
 
 # Cast to float32 and int64
@@ -1060,7 +1134,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[28]:
+# In[29]:
 
 
 # Data sets
@@ -1069,7 +1143,7 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test) 
 
 
-# In[29]:
+# In[30]:
 
 
 # Model
@@ -1095,7 +1169,7 @@ params = {
 evals = [(dtrain, "train"), (dval, "validation")]
 
 
-# In[30]:
+# In[31]:
 
 
 # Train
@@ -1109,7 +1183,7 @@ model_b = xgb.train(
 )
 
 
-# In[31]:
+# In[ ]:
 
 
 # Evaluation
@@ -1147,14 +1221,14 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[32]:
+# In[ ]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[33]:
+# In[ ]:
 
 
 # Save xgb model
