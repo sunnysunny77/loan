@@ -124,12 +124,21 @@ def engineer_features(df):
     df_engi = df.copy()
 
     df_engi["TotalPastDue"] = (
-    df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
-    df_engi["NumberOfTimes90DaysLate"] +
-    df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
+        df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
+        df_engi["NumberOfTimes90DaysLate"] +
+        df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
     )
+
     df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
-    df_engi["MajorDelinquencyBinary"] = (df_engi["NumberOfTimes90DaysLate"] > 0).astype(int)
+
+    df_engi["MajorDelinquencyBinary"] = (
+        (df_engi["NumberOfTimes90DaysLate"] > 0) |
+        (df_engi["NumberOfTime60-89DaysPastDueNotWorse"] > 0)
+    ).astype(int)
+
+    df_engi["IsHighUtilizationBinary"] = (
+        df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67
+    ).astype(int)
 
     df_engi["AgeBin"] = pd.cut(
         df_engi["age"],
@@ -140,15 +149,6 @@ def engineer_features(df):
         ],
         include_lowest=True
     )
-
-    df_engi["AgeTimesIncome"] = df_engi["age"] * df_engi["MonthlyIncome"]
-
-    threshold = 0.8
-    df_engi["IsHighUtilizationBinary"] = (
-        df_engi["RevolvingUtilizationOfUnsecuredLines"] > threshold
-    ).astype(int)
-
-    df_engi["MonthlyDebtAmount"] = df_engi["DebtRatio"] * df_engi["MonthlyIncome"]
 
     def credit_mix(row):
         if row["NumberRealEstateLoansOrLines"] == 0 and row["NumberOfOpenCreditLinesAndLoans"] == 0:
@@ -161,6 +161,28 @@ def engineer_features(df):
             return "MixedCredit"
 
     df_engi["CreditMix"] = df_engi.apply(credit_mix, axis=1)
+
+    df_engi["IsCreditMixRisky"] = df_engi["CreditMix"].ne("MixedCredit").astype(int)
+
+    df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.67).astype(int)
+
+    df_engi["Has90DaysLate"] = (df_engi["NumberOfTimes90DaysLate"] > 0).astype(int)
+
+    df_engi["HasAnyLate"] = (
+        (df_engi["NumberOfTimes90DaysLate"] +
+        df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
+        df_engi["NumberOfTime60-89DaysPastDueNotWorse"]) > 0
+    ).astype(int)
+
+    df_engi["HasMultipleLate"] = (
+        (df_engi["NumberOfTimes90DaysLate"] +
+        df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
+        df_engi["NumberOfTime60-89DaysPastDueNotWorse"]) >= 2
+    ).astype(int)
+
+    df_engi["HasHighOpenCreditLines"] = (df_engi["NumberOfOpenCreditLinesAndLoans"] > 8).astype(int)
+
+    df_engi["HasHighDebtLoad"] = ((df_engi["DebtRatio"] > 0.5) & (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)).astype(int)
 
     print(f"Added engineer features")
 
@@ -626,21 +648,21 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
 # Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.01, bias_mode=None)
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.01, bias_mode=False)
 
 
 # In[13]:
 
 
 # Plot features
-plot_feature_importance(df_corr, y_train, bias_mode=False)
+plot_feature_importance(df_corr, y_train, bias_mode=None)
 
 
 # In[14]:
 
 
 # RFE numeric Feature selection
-df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=11, bias_mode=None) 
+df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=14, bias_mode=False) 
 
 
 # In[15]:
