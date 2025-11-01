@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[36]:
 
 
 # Imports
@@ -18,7 +18,7 @@ import copy
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score, fbeta_score
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
@@ -184,6 +184,8 @@ def engineer_features(df):
 
     df_engi["HasHighDebtLoad"] = ((df_engi["DebtRatio"] > 0.5) & (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)).astype(int)
 
+    df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
+
     print(f"Added engineer features")
 
     return df_engi
@@ -265,7 +267,6 @@ def collapse_rare_categories(df, threshold=0.005):
             print(f"Categories collapsed: {list(rare_cats)}")
         else:
             print("No rare categories cols collapsed")
-            rare_maps = None
 
     return df_copy, rare_maps
 
@@ -307,6 +308,25 @@ def drop_low_correlated_to_target(df, y, threshold=0.34, bias_mode=None):
 
     return df_corr, dropped_cols
 
+
+def log_transform_skewed(df, skew_threshold=1.0):
+
+    df_copy = df.copy()
+    numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
+
+    for col in numeric_cols:
+        if df_copy[col].isna().all():
+            continue 
+        skew = df_copy[col].skew()
+        if abs(skew) > skew_threshold:
+            if (df_copy[col] >= 0).all():
+                df_copy[col] = np.log1p(df_copy[col])
+                print(f"Log-transformed: {col}")
+            else:
+                print(f"Skipped log transform (negative values): {col}")
+
+    return df_copy
+
 def plot_feature_importance(df, target, random_state=42, bias_mode=None):
 
     df_temp = df.copy()
@@ -338,20 +358,20 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
         objective="binary:logistic",
         eval_metric=["auc"],
         scale_pos_weight=scale_pos_weight,
-        learning_rate=0.05,
+        learning_rate=0.03,
         max_depth=6,
-        min_child_weight=5,
+        min_child_weight=3,
         subsample=0.8,
         colsample_bytree=0.7,
-        gamma=1,
-        reg_alpha=0.1,
-        reg_lambda=1.0,
-        n_estimators=500,
+        gamma=0.5,
+        reg_alpha=0.05,
+        reg_lambda=0.8,
+        n_estimators=1500,
         random_state=42,
         n_jobs=-1,
         verbosity=0,
-        early_stopping_rounds=50,
-        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.05 * (0.99 ** epoch))]
+        early_stopping_rounds=100,
+        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.03 * (0.99 ** epoch))]
     )
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
@@ -396,19 +416,19 @@ def select_features(df, target, n_features_to_select=20, random_state=42, bias_m
         objective="binary:logistic",
         eval_metric=["auc"],
         scale_pos_weight=scale_pos_weight,
-        learning_rate=0.05,
+        learning_rate=0.03,
         max_depth=6,
-        min_child_weight=5,
+        min_child_weight=3,
         subsample=0.8,
         colsample_bytree=0.7,
-        gamma=1,
-        reg_alpha=0.1,
-        reg_lambda=1.0,
-        n_estimators=500,
+        gamma=0.5,
+        reg_alpha=0.05,
+        reg_lambda=0.8,
+        n_estimators=1500,
         random_state=42,
         n_jobs=-1,
         verbosity=0,
-        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.05 * (0.99 ** epoch))]
+        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.03 * (0.99 ** epoch))]
     )
 
     selector = RFE(estimator=base_model, n_features_to_select=n_features_to_select, step=1)
@@ -545,6 +565,26 @@ def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=T
     else:
         return df_cleaned
 
+def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
+
+    y_true = np.asarray(y_true)
+    y_probs = np.asarray(y_probs)
+    thresholds = np.asarray(thresholds)
+
+    preds = y_probs[:, None] > thresholds[None, :] 
+
+    TP = (preds & (y_true[:, None] == 1)).sum(axis=0)
+    FP = (preds & (y_true[:, None] == 0)).sum(axis=0)
+    FN = ((~preds) & (y_true[:, None] == 1)).sum(axis=0)
+
+    precision = TP / (TP + FP + 1e-8)
+    recall = TP / (TP + FN + 1e-8)
+
+    beta_sq = beta ** 2
+    f_beta = (1 + beta_sq) * (precision * recall) / (beta_sq * precision + recall + 1e-8)
+
+    return f_beta
+
 
 # In[3]:
 
@@ -648,31 +688,39 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
 # Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.01, bias_mode=False)
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.0093, bias_mode=False)
 
 
 # In[13]:
 
 
-# Plot features
-plot_feature_importance(df_corr, y_train, bias_mode=None)
+#log transform skewed
+df_log = log_transform_skewed(df_corr)
+df_log.describe()
 
 
 # In[14]:
 
 
-# RFE numeric Feature selection
-df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=14, bias_mode=False) 
+# Plot features
+plot_feature_importance(df_log, y_train, bias_mode=None)
 
 
 # In[15]:
+
+
+# RFE numeric Feature selection
+df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=16, bias_mode=False) 
+
+
+# In[16]:
 
 
 # Impute and scale
 df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler = impute_and_scale(df_selected , threshold=1.0)
 
 
-# In[16]:
+# In[17]:
 
 
 # Process
@@ -687,21 +735,21 @@ X_test = transform_val_test(X_test, all_cols_to_drop, rare_maps, num_imputer, ca
 X_train = df_processed.copy()
 
 
-# In[17]:
+# In[18]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[18]:
+# In[19]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[19]:
+# In[20]:
 
 
 # Encode
@@ -723,7 +771,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[20]:
+# In[21]:
 
 
 # Drop imputation flags for NN 
@@ -738,7 +786,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[21]:
+# In[22]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -753,7 +801,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[22]:
+# In[23]:
 
 
 # Convert to tensors
@@ -779,7 +827,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[24]:
 
 
 # Datasets
@@ -806,7 +854,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[25]:
 
 
 # Model
@@ -880,7 +928,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[26]:
 
 
 # Loss
@@ -907,7 +955,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[26]:
+# In[27]:
 
 
 # Train
@@ -996,7 +1044,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[27]:
+# In[28]:
 
 
 # Evaluation
@@ -1014,7 +1062,7 @@ y_val_probs = np.array(y_val_probs)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-f_beta_scores = [fbeta_score(y_val, (y_val_probs > t).astype(int), beta=2) for t in thresholds]
+f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2)
 best_thresh = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
@@ -1052,7 +1100,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[28]:
+# In[29]:
 
 
 # Cast to float32 
@@ -1061,7 +1109,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[29]:
+# In[30]:
 
 
 # Model
@@ -1074,31 +1122,31 @@ model_b = xgb.XGBClassifier(
     objective="binary:logistic",
     eval_metric=["auc"],
     scale_pos_weight=scale_pos_weight,
-    learning_rate=0.05,
+    learning_rate=0.03,
     max_depth=6,
-    min_child_weight=5,
+    min_child_weight=3,
     subsample=0.8,
     colsample_bytree=0.7,
-    gamma=1,
-    reg_alpha=0.1,
-    reg_lambda=1.0,
-    n_estimators=500,
+    gamma=0.5,
+    reg_alpha=0.05,
+    reg_lambda=0.8,
+    n_estimators=1500,
     random_state=42,
     n_jobs=-1,
     verbosity=1,
-    early_stopping_rounds=50,
-    callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.05 * (0.99 ** epoch))]
+    early_stopping_rounds=100,
+    callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.03 * (0.99 ** epoch))]
 )
 
 
-# In[30]:
+# In[31]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[31]:
+# In[32]:
 
 
 # Evaluation
@@ -1106,7 +1154,7 @@ y_probs = model_b.predict_proba(X_test)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-f_beta_scores = [fbeta_score(y_test, (y_probs > t).astype(int), beta=2) for t in thresholds]
+f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2)
 best_thresh = thresholds[np.argmax(f_beta_scores)]
 
 y_pred = (y_probs > best_thresh).astype(int)
@@ -1135,22 +1183,23 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[32]:
+# In[33]:
 
 
+# Importance
 xgb.plot_importance(model_b, importance_type='gain', max_num_features=15)
 plt.title("Top Feature Importances (Gain)")
 plt.show()
 
 
-# In[33]:
+# In[34]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[34]:
+# In[35]:
 
 
 # Save xgb model
