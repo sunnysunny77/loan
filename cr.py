@@ -143,10 +143,6 @@ def engineer_features(df):
         df_engi["NumberOfOpenCreditLinesAndLoans"] /
         df_engi["NumberRealEstateLoansOrLines"].replace(0, np.nan)
     )
-    df_engi["UtilToAgeRatio"] = (
-        df_engi["RevolvingUtilizationOfUnsecuredLines"] /
-        df_engi["age"].replace(0, np.nan)
-    )
 
     # -------------------------------------------------------------------------
     # CREDIT MIX FEATURE
@@ -189,15 +185,6 @@ def engineer_features(df):
         ],
         include_lowest=True
     )
-
-    # -------------------------------------------------------------------------
-    # ADVANCED INTERACTIONS
-    # -------------------------------------------------------------------------
-    df_engi["IncomePerOpenCredit"] = (
-        df_engi["MonthlyIncome"] /
-        df_engi["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
-    )
-    df_engi["PastDuePerAge"] = df_engi["TotalPastDue"] / df_engi["age"].replace(0, np.nan)
 
     print(f"Added engineer features")
 
@@ -285,51 +272,46 @@ def collapse_rare_categories(df, threshold=0.005):
 
     return df_copy, rare_maps
 
-def impute_and_scale(df, threshold=1.0):
+def drop_low_correlated_to_target(df, y, threshold=0.34, bias_mode=None):
 
-    df_copy = df.copy()
-    numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
-    cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
+    df_temp = df.copy()
 
-    num_imputer = None
-    cat_imputer = None
-    robust_scaler = None
-    std_scaler = None
+    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
+    for col in cat_cols:
+        df_temp[col] = df_temp[col].astype('category').cat.codes
 
-    if numeric_cols:
-        df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
+    df_temp['target'] = y
+    corr_with_target = df_temp.corr()['target'].drop('target')
 
-        for col in numeric_cols:
-            df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+    if bias_mode is None:
+        # Drop all features whose absolute correlation is below threshold
+        dropped_cols = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
+    elif bias_mode is True:
+        # Drop only weak positively correlated features (0 < corr < threshold)
+        dropped_cols = corr_with_target[(corr_with_target > 0) & (corr_with_target < threshold)].index.tolist()
+    else: 
+        # Drop only weak negatively correlated features (-threshold < corr < 0)
+        dropped_cols = corr_with_target[(corr_with_target < 0) & (corr_with_target > -threshold)].index.tolist()
 
-        num_imputer = SimpleImputer(strategy='median')
-        df_copy[numeric_cols] = num_imputer.fit_transform(df_copy[numeric_cols])
+    plt.figure(figsize=(10, 6))
+    corr_with_target.sort_values(ascending=False).plot(kind='bar', color='skyblue')
+    plt.axhline(y=threshold, color='red', linestyle='--', label=f'+{threshold}')
+    plt.axhline(y=-threshold, color='red', linestyle='--', label=f'-{threshold}')
+    plt.title("Feature Correlation with Target")
+    plt.ylabel("Correlation")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-    if cat_cols:
-        for col in cat_cols:
-            df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+    if dropped_cols:
+        df_corr = df.drop(columns=dropped_cols)
+        print(f"Dropped: {len(dropped_cols)} low correlated to target cols")
+        print(f"Dropped cols: {dropped_cols}")
+    else:
+        df_corr = df.copy()
+        print("No low correlated to target cols dropped")
 
-        cat_imputer = SimpleImputer(strategy='most_frequent')
-        df_copy[cat_cols] = cat_imputer.fit_transform(df_copy[cat_cols])
-
-    if numeric_cols:
-        skewness = pd.DataFrame(df_copy[numeric_cols]).skew().sort_values(ascending=False)
-        skewed_cols = skewness[abs(skewness) > threshold].index.tolist()
-
-        if skewed_cols:
-            robust_scaler = RobustScaler()
-            df_copy[skewed_cols] = robust_scaler.fit_transform(df_copy[skewed_cols]).astype(np.float32)
-
-        normal_cols = [c for c in numeric_cols if c not in skewed_cols]
-        if normal_cols:
-            std_scaler = StandardScaler()
-            df_copy[normal_cols] = std_scaler.fit_transform(df_copy[normal_cols]).astype(np.float32)
-
-    df_processed = df_copy.copy()
-
-    print("Imputed, flagged, and scaled features")
-
-    return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
+    return df_corr, dropped_cols
 
 def plot_feature_importance(df, target, random_state=42, bias_mode=None):
 
@@ -393,15 +375,12 @@ def select_features(df, target, n_features_to_select=20, random_state=42, bias_m
 
     df_temp = df.copy()
 
-    imputed_flag_cols = [col for col in df_temp.columns if col.startswith("Was") and col.endswith("Imputed")]
-    original_cols = [col for col in df_temp.columns if col not in imputed_flag_cols]
-
-    cat_cols = df_temp[original_cols].select_dtypes(include=['object', 'category']).columns.tolist()
+    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
 
     X_train_full, X_val_full, y_train, y_val = train_test_split(
-        df_temp[original_cols], target, test_size=0.2, random_state=random_state, stratify=target
+        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
     )
 
     X_train = X_train_full.drop(columns=cat_cols).astype(np.float32)
@@ -429,25 +408,72 @@ def select_features(df, target, n_features_to_select=20, random_state=42, bias_m
         gamma=1,
         reg_alpha=0.1,
         reg_lambda=1.0,
-        n_estimators=500
+        n_estimators=500,
+        random_state=random_state,
+        n_jobs=-1,
+        verbosity=0
     )
 
     selector = RFE(estimator=base_model, n_features_to_select=n_features_to_select, step=1)
     selector.fit(X_train, y_train)
 
     selected_features = X_train.columns[selector.support_].tolist()
-    dropped_features = [col for col in X_train.columns if col not in selected_features]    
-    selected_flags = [f'Was{col}Imputed' for col in selected_features if f'Was{col}Imputed' in df.columns]
+    rfe_cols_to_drop = [col for col in X_train.columns if col not in selected_features]
 
-    final_features = selected_features + selected_flags + [col for col in cat_cols if col in df.columns]
-    df_selected = df.reindex(columns=final_features, fill_value=0).copy()
+    final_features = selected_features + [col for col in cat_cols if col in df.columns]
+    df_selected = df[final_features].copy()
 
-    print(f"Dropped: {len(dropped_features)} select_features")
-    print(f"Dropped cols: {dropped_features}")
+    df_selected = df_selected.drop(columns=rfe_cols_to_drop, errors='ignore')
 
-    return df_selected, final_features
+    print(f"Dropped: {len(rfe_cols_to_drop)} select features col")
+    print(f"Dropped cols: {rfe_cols_to_drop}")
 
-def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler):
+    return df_selected, rfe_cols_to_drop
+
+def impute_and_scale(df, threshold=1.0):
+
+    df_copy = df.copy()
+    numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
+    cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
+
+    num_imputer = None
+    cat_imputer = None
+    robust_scaler = None
+    std_scaler = None
+
+    if numeric_cols:
+        df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
+        num_imputer = SimpleImputer(strategy='median')
+        for col in numeric_cols:
+            df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+        df_copy[numeric_cols] = num_imputer.fit_transform(df_copy[numeric_cols])
+
+        skewness = pd.DataFrame(df_copy[numeric_cols]).skew().sort_values(ascending=False)
+        skewed_cols = skewness[abs(skewness) > threshold].index.tolist()
+
+        if skewed_cols:
+            robust_scaler = RobustScaler()
+            df_copy[skewed_cols] = robust_scaler.fit_transform(df_copy[skewed_cols])
+
+        normal_cols = [c for c in numeric_cols if c not in skewed_cols]
+        if normal_cols:
+            std_scaler = StandardScaler()
+            df_copy[normal_cols] = std_scaler.fit_transform(df_copy[normal_cols])
+
+    if cat_cols:
+        for col in cat_cols:
+            df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+        cat_imputer = SimpleImputer(strategy='most_frequent')
+        df_copy[cat_cols] = cat_imputer.fit_transform(df_copy[cat_cols])
+
+    df_processed = df_copy.copy()
+
+    print("Imputed, flagged, and scaled features")
+
+    return df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler
+
+def transform_val_test(df, cols_to_drop, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler, train_columns=None):
 
     df_copy = df.copy()
 
@@ -460,26 +486,39 @@ def transform_val_test(df, cols_to_drop, selected_features, rare_maps, num_imput
                 df_copy[col] = df_copy[col].apply(lambda x: x if x not in rare_cats else 'Other')
 
     numeric_cols = df_copy.select_dtypes(include=['number']).columns.tolist()
-
-    if numeric_cols and num_imputer:
-        df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
-        df_copy[numeric_cols] = num_imputer.transform(df_copy[numeric_cols])
-
-    if robust_scaler:
-        skewed_cols = robust_scaler.feature_names_in_
-        df_copy[skewed_cols] = robust_scaler.transform(df_copy[skewed_cols]).astype(np.float32)
-
-    if std_scaler:
-        normal_cols = [c for c in numeric_cols if robust_scaler is None or c not in robust_scaler.feature_names_in_]
-        if normal_cols:
-            df_copy[normal_cols] = std_scaler.transform(df_copy[normal_cols]).astype(np.float32)
-
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
-    if cat_cols and cat_imputer:
-        df_copy[cat_cols] = cat_imputer.transform(df_copy[cat_cols])
 
-    if selected_features:
-        df_copy = df_copy.reindex(columns=selected_features, fill_value=0)
+    if numeric_cols:
+
+        for col in numeric_cols:
+            if col in df_copy.columns:
+                df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+        df_copy[numeric_cols] = df_copy[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
+        if num_imputer:
+            df_copy[numeric_cols] = num_imputer.transform(df_copy[numeric_cols])
+
+        if robust_scaler:
+            skewed_cols = robust_scaler.feature_names_in_
+            df_copy[skewed_cols] = robust_scaler.transform(df_copy[skewed_cols])
+
+        if std_scaler:
+            normal_cols = [c for c in numeric_cols if robust_scaler is None or c not in robust_scaler.feature_names_in_]
+            if normal_cols:
+                df_copy[normal_cols] = std_scaler.transform(df_copy[normal_cols])
+
+    if cat_cols:
+        for col in cat_cols:
+            if col in df_copy.columns:
+                df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
+
+        if cat_imputer:
+            df_copy[cat_cols] = cat_imputer.transform(df_copy[cat_cols])
+
+    if train_columns is not None:
+        df_copy = df_copy.reindex(columns=train_columns, fill_value=0)
+
+    print("Imputed, flagged, and scaled features")
 
     return df_copy
 
@@ -526,10 +565,17 @@ print(dataset_summary(df_train))
 print(df_train.head(5))
 
 
-# In[36]:
+# In[5]:
 
 
 # Outlier Handling
+numeric_df = df_train.select_dtypes(include=['int64', 'float64'])
+plt.figure(figsize=(15, 6))
+sns.boxplot(data=numeric_df)
+plt.title("Boxplot for All Numeric Features")
+plt.xticks(rotation=45)
+plt.show()
+
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
 
 df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True) 
@@ -537,8 +583,8 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_filtered = outlier_handling(
     df_train,
     target_col="SeriousDlqin2yrs",
-    threshold_high = 99.992,
-    threshold_low = 0.008
+    threshold_high = 99.99,
+    threshold_low = 0.01
 )
 
 numeric_df = df_filtered.select_dtypes(include=['int64', 'float64'])
@@ -549,7 +595,7 @@ plt.xticks(rotation=45)
 plt.show()
 
 
-# In[37]:
+# In[6]:
 
 
 # Select targets
@@ -557,7 +603,7 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[38]:
+# In[7]:
 
 
 # Split train/test
@@ -571,84 +617,92 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[39]:
+# In[8]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[40]:
+# In[9]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=50)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.17)
 
 
-# In[41]:
+# In[10]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[42]:
+# In[11]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
-# In[43]:
+# In[12]:
 
 
-# Impute and scale
-df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler  = impute_and_scale(df_collapsed , threshold=1.0)
+# Drop low correlated features to target
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.01, bias_mode=None)
 
 
-# In[44]:
+# In[13]:
 
 
 # Plot features
-plot_feature_importance(df_processed, y_train, bias_mode=None)
+plot_feature_importance(df_corr, y_train, bias_mode=None)
 
 
-# In[45]:
+# In[14]:
 
 
-# Numeric Feature selection
-df_selected, selected_features = select_features(df_processed, y_train, n_features_to_select=21, bias_mode=None) 
+# RFE numeric Feature selection
+df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=11, bias_mode=None) 
 
 
-# In[46]:
+# In[15]:
+
+
+# Impute and scale
+df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler = impute_and_scale(df_selected , threshold=1.0)
+
+
+# In[16]:
 
 
 # Process
-all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop
+all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop + low_corr_cols_to_drop + rfe_cols_to_drop
 
 X_val = engineer_features(X_val)
-X_val = transform_val_test(X_val, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
+X_val = transform_val_test(X_val, all_cols_to_drop, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler, df_processed.columns)
 
 X_test = engineer_features(X_test)
-X_test = transform_val_test(X_test, all_cols_to_drop, selected_features, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler)
-X_train = df_selected.copy()
+X_test = transform_val_test(X_test, all_cols_to_drop, rare_maps, num_imputer, cat_imputer, robust_scaler, std_scaler, df_processed.columns)
+
+X_train = df_processed.copy()
 
 
-# In[47]:
+# In[17]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[48]:
+# In[18]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[49]:
+# In[19]:
 
 
 # Encode
@@ -670,7 +724,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[50]:
+# In[20]:
 
 
 # Drop imputation flags for NN input
@@ -685,7 +739,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[51]:
+# In[21]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -700,7 +754,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[52]:
+# In[22]:
 
 
 # Convert to tensors
@@ -726,7 +780,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[53]:
+# In[23]:
 
 
 # Datasets
@@ -753,7 +807,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[54]:
+# In[24]:
 
 
 # Model
@@ -823,7 +877,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[55]:
+# In[25]:
 
 
 # Loss
@@ -850,7 +904,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[56]:
+# In[26]:
 
 
 # Train
@@ -939,7 +993,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[57]:
+# In[27]:
 
 
 # Evaluation
@@ -995,7 +1049,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[58]:
+# In[28]:
 
 
 # Cast to float32 
@@ -1004,7 +1058,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[59]:
+# In[29]:
 
 
 # Model
@@ -1028,14 +1082,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[60]:
+# In[30]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[61]:
+# In[31]:
 
 
 # Evaluation
@@ -1072,14 +1126,14 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
 plt.show()
 
 
-# In[62]:
+# In[32]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[63]:
+# In[33]:
 
 
 # Save xgb model
