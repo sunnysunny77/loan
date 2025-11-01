@@ -30,11 +30,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # Constants
-lr = 5e-4
-weight_decay = 1e-5
+lr = 1e-3
+weight_decay = 1e-4
 batch_size = 32
 num_epochs = 75
-num_runs = 2
+num_runs = 5
 max_patience = 13
 
 # pd 
@@ -243,7 +243,7 @@ def collapse_rare_categories(df, threshold=0.005):
             print(f"Categories collapsed: {list(rare_cats)}")
         else:
             print("No rare categories cols collapsed")
-            rare_maps = []
+            rare_maps = None
 
     return df_copy, rare_maps
 
@@ -325,9 +325,11 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
         reg_alpha=0.1,
         reg_lambda=1.0,
         n_estimators=500,
-        random_state=random_state,
+        random_state=42,
         n_jobs=-1,
-        verbosity=0
+        verbosity=0,
+        early_stopping_rounds=50,
+        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.05 * (0.99 ** epoch))]
     )
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
@@ -381,9 +383,10 @@ def select_features(df, target, n_features_to_select=20, random_state=42, bias_m
         reg_alpha=0.1,
         reg_lambda=1.0,
         n_estimators=500,
-        random_state=random_state,
+        random_state=42,
         n_jobs=-1,
-        verbosity=0
+        verbosity=0,
+        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.05 * (0.99 ** epoch))]
     )
 
     selector = RFE(estimator=base_model, n_features_to_select=n_features_to_select, step=1)
@@ -555,8 +558,8 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_filtered = outlier_handling(
     df_train,
     target_col="SeriousDlqin2yrs",
-    threshold_high = 99.99,
-    threshold_low = 0.01
+    threshold_high = 99.97,
+    threshold_low = 0.03
 )
 
 numeric_df = df_filtered.select_dtypes(include=['int64', 'float64'])
@@ -801,29 +804,33 @@ class NN(nn.Module):
         self.input_dim = num_numeric + total_emb_dim
 
         self.main = nn.Sequential(
-            nn.Linear(self.input_dim, 144),
-            nn.BatchNorm1d(144),
+            nn.Linear(self.input_dim, 256),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(144, 72),
-            nn.BatchNorm1d(72),
+            nn.Dropout(0.2),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1)
         )
 
         self.skip_proj_main = nn.Sequential(
-            nn.Linear(self.input_dim, 72),
+            nn.Linear(self.input_dim, 64),
             nn.Dropout(0.3)
         )
 
         self.cat_skip = nn.Sequential(
-            nn.Linear(total_emb_dim, 72),
-            nn.BatchNorm1d(72),
+            nn.Linear(total_emb_dim, 64),
+            nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Dropout(0.4)
         )
 
-        self.out = nn.Linear(72, 1)
+        self.out = nn.Linear(64, 1)
 
     def forward(self, x_num, x_cat):
 
@@ -1056,7 +1063,9 @@ model_b = xgb.XGBClassifier(
     n_estimators=500,
     random_state=42,
     n_jobs=-1,
-    verbosity=1                  
+    verbosity=1,
+    early_stopping_rounds=50,
+    callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.05 * (0.99 ** epoch))]
 )
 
 
@@ -1107,11 +1116,19 @@ plt.show()
 # In[32]:
 
 
+xgb.plot_importance(model_b, importance_type='gain', max_num_features=15)
+plt.title("Top Feature Importances (Gain)")
+plt.show()
+
+
+# In[33]:
+
+
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[33]:
+# In[34]:
 
 
 # Save xgb model
