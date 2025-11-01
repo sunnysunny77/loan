@@ -105,7 +105,6 @@ def outlier_handling(df, target_col, threshold_high=99, threshold_low=1):
     df_filtered = df_copy.loc[mask].reset_index(drop=True)
 
     print(f"Dropped: {len(df_copy) - len(df_filtered)} outlier rows")
-    print(df_filtered.describe())
 
     return df_filtered
 
@@ -124,29 +123,33 @@ def engineer_features(df):
 
     df_engi = df.copy()
 
-    # -------------------------------------------------------------------------
-    # DELINQUENCY-RELATED FEATURES
-    # -------------------------------------------------------------------------
     df_engi["TotalPastDue"] = (
-        df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
-        df_engi["NumberOfTimes90DaysLate"] +
-        df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
+    df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
+    df_engi["NumberOfTimes90DaysLate"] +
+    df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
     )
     df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
     df_engi["MajorDelinquencyBinary"] = (df_engi["NumberOfTimes90DaysLate"] > 0).astype(int)
 
-    # -------------------------------------------------------------------------
-    # INCOME / DEBT RELATIONSHIPS
-    # -------------------------------------------------------------------------
-    df_engi["MonthlyDebtAmount"] = df_engi["DebtRatio"] * df_engi["MonthlyIncome"]
-    df_engi["AvailableCreditRatio"] = (
-        df_engi["NumberOfOpenCreditLinesAndLoans"] /
-        df_engi["NumberRealEstateLoansOrLines"].replace(0, np.nan)
+    df_engi["AgeBin"] = pd.cut(
+        df_engi["age"],
+        bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
+        labels=[
+            "Age_0_25", "Age_25_35", "Age_35_45", "Age_45_55",
+            "Age_55_65", "Age_65_75", "Age_75_85", "Age_85_100"
+        ],
+        include_lowest=True
     )
 
-    # -------------------------------------------------------------------------
-    # CREDIT MIX FEATURE
-    # -------------------------------------------------------------------------
+    df_engi["AgeTimesIncome"] = df_engi["age"] * df_engi["MonthlyIncome"]
+
+    threshold = 0.8
+    df_engi["IsHighUtilizationBinary"] = (
+        df_engi["RevolvingUtilizationOfUnsecuredLines"] > threshold
+    ).astype(int)
+
+    df_engi["MonthlyDebtAmount"] = df_engi["DebtRatio"] * df_engi["MonthlyIncome"]
+
     def credit_mix(row):
         if row["NumberRealEstateLoansOrLines"] == 0 and row["NumberOfOpenCreditLinesAndLoans"] == 0:
             return "NoCredit"
@@ -158,33 +161,6 @@ def engineer_features(df):
             return "MixedCredit"
 
     df_engi["CreditMix"] = df_engi.apply(credit_mix, axis=1)
-
-    # -------------------------------------------------------------------------
-    # HIGH UTILIZATION FLAG
-    # -------------------------------------------------------------------------
-    threshold = 0.8
-    df_engi["IsHighUtilizationBinary"] = (
-        df_engi["RevolvingUtilizationOfUnsecuredLines"] > threshold
-    ).astype(int)
-
-    # -------------------------------------------------------------------------
-    # RATIO AND INTERACTION FEATURES
-    # -------------------------------------------------------------------------
-    df_engi["MonthlyDebtPerIncome"] = df_engi["MonthlyDebtAmount"] / df_engi["MonthlyIncome"].replace(0, np.nan)
-    df_engi["AgeTimesIncome"] = df_engi["age"] * df_engi["MonthlyIncome"]
-
-    # -------------------------------------------------------------------------
-    # AGE BINNING
-    # -------------------------------------------------------------------------
-    df_engi["AgeBin"] = pd.cut(
-        df_engi["age"],
-        bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
-        labels=[
-            "Age_0_25", "Age_25_35", "Age_35_45", "Age_45_55",
-            "Age_55_65", "Age_65_75", "Age_75_85", "Age_85_100"
-        ],
-        include_lowest=True
-    )
 
     print(f"Added engineer features")
 
@@ -198,7 +174,8 @@ def drop_high_missing_cols(df, threshold=0.3):
         'MissingPercent': (missing_frac * 100).round(2)
     })
 
-    print(missing_summary.to_string())
+    if df.isna().sum().sum() > 0:
+        print(missing_summary.to_string())
 
     hm_cols_to_drop = missing_frac[missing_frac > threshold].index.tolist()
 
@@ -216,17 +193,14 @@ def drop_high_card_cols(df, threshold=50):
 
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
 
-    if not cat_cols:
-        print("No high cardinality cols dropped")
-        return df.copy(), []
-
     unique_counts = df[cat_cols].nunique().sort_values(ascending=False)
     unique_summary = pd.DataFrame({
         'UniqueCount': unique_counts,
         'UniquePercent': (unique_counts / len(df) * 100).round(2)
     })
 
-    print(unique_summary.to_string())
+    if cat_cols:
+        print(unique_summary.to_string())
 
     hc_cols_to_drop = unique_counts[unique_counts > threshold].index.tolist()
 
@@ -243,12 +217,13 @@ def drop_high_card_cols(df, threshold=50):
 def collapse_rare_categories(df, threshold=0.005):
 
     df_copy = df.copy()
+
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
-    rare_maps = {}
 
     if not cat_cols:
         print("No rare categories cols collapsed")
-        return df_copy, []
+
+    rare_maps = {}
 
     for col in cat_cols:
         freqs = df_copy[col].value_counts(normalize=True).sort_values(ascending=False)
@@ -284,13 +259,10 @@ def drop_low_correlated_to_target(df, y, threshold=0.34, bias_mode=None):
     corr_with_target = df_temp.corr()['target'].drop('target')
 
     if bias_mode is None:
-        # Drop all features whose absolute correlation is below threshold
         dropped_cols = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
     elif bias_mode is True:
-        # Drop only weak positively correlated features (0 < corr < threshold)
         dropped_cols = corr_with_target[(corr_with_target > 0) & (corr_with_target < threshold)].index.tolist()
     else: 
-        # Drop only weak negatively correlated features (-threshold < corr < 0)
         dropped_cols = corr_with_target[(corr_with_target < 0) & (corr_with_target > -threshold)].index.tolist()
 
     plt.figure(figsize=(10, 6))
@@ -317,8 +289,7 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
 
     df_temp = df.copy()
 
-    imputed_flag_cols = [col for col in df_temp.columns if col.startswith("Was") and col.endswith("Imputed")]
-    feature_cols = [c for c in df_temp.columns if c not in imputed_flag_cols]
+    feature_cols = df_temp.columns.tolist()
 
     cat_cols = df_temp[feature_cols].select_dtypes(include=['object', 'category']).columns.tolist()
     for col in cat_cols:
@@ -331,12 +302,12 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
     X_train = X_train.astype(np.float32)
     X_val = X_val.astype(np.float32)
 
-    neg_count = sum(y_train == 0)
-    pos_count = sum(y_train == 1)
+    neg_count = (y_train == 0).sum()
+    pos_count = (y_train == 1).sum()
 
-    if bias_mode == True:
+    if bias_mode is True:
         scale_pos_weight = pos_count / neg_count
-    elif bias_mode == False:
+    elif bias_mode is False:
         scale_pos_weight = neg_count / pos_count
     else:
         scale_pos_weight = 1
@@ -344,24 +315,25 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
     model = xgb.XGBClassifier(
         objective="binary:logistic",
         eval_metric=["auc"],
-        scale_pos_weight=scale_pos_weight,  
-        learning_rate=0.05,                
-        max_depth=6,                        
-        min_child_weight=5,                 
-        subsample=0.8,                   
-        colsample_bytree=0.7,           
-        gamma=1,                         
-        reg_alpha=0.1,                      
-        reg_lambda=1.0,                 
-        n_estimators=500,          
+        scale_pos_weight=scale_pos_weight,
+        learning_rate=0.05,
+        max_depth=6,
+        min_child_weight=5,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        gamma=1,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        n_estimators=500,
+        random_state=random_state,
+        n_jobs=-1,
+        verbosity=0
     )
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
     importance_dict = model.get_booster().get_score(importance_type='gain')
-    all_importances = pd.Series(0, index=feature_cols, dtype=float)
-    for k, v in importance_dict.items():
-        all_importances[k] = v
+    all_importances = pd.Series({col: importance_dict.get(col, 0.0) for col in feature_cols})
     all_importances = all_importances.sort_values(ascending=False)
 
     plt.figure(figsize=(10, 6))
@@ -594,6 +566,8 @@ plt.title("Boxplot for All Numeric Features")
 plt.xticks(rotation=45)
 plt.show()
 
+df_filtered.describe()
+
 
 # In[6]:
 
@@ -656,7 +630,7 @@ df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_t
 
 
 # Plot features
-plot_feature_importance(df_corr, y_train, bias_mode=None)
+plot_feature_importance(df_corr, y_train, bias_mode=False)
 
 
 # In[14]:
@@ -727,7 +701,7 @@ for col in cat_cols:
 # In[20]:
 
 
-# Drop imputation flags for NN input
+# Drop imputation flags for NN 
 def drop_imputation_flags(df):
     imputed_flag_cols = [col for col in df.columns if col.startswith("Was") and col.endswith("Imputed")]
     df_nn = df.drop(columns=imputed_flag_cols, errors='ignore')
@@ -1064,21 +1038,25 @@ X_test = X_test.astype(np.float32)
 # Model
 neg_count = sum(y_train == 0)
 pos_count = sum(y_train == 1)
+
 scale_pos_weight = neg_count / pos_count
 
 model_b = xgb.XGBClassifier(
     objective="binary:logistic",
     eval_metric=["auc"],
-    scale_pos_weight=scale_pos_weight,  
-    learning_rate=0.05,                
-    max_depth=6,                        
-    min_child_weight=5,                 
-    subsample=0.8,                   
-    colsample_bytree=0.7,           
-    gamma=1,                         
-    reg_alpha=0.1,                      
-    reg_lambda=1.0,                 
-    n_estimators=500,                    
+    scale_pos_weight=scale_pos_weight,
+    learning_rate=0.05,
+    max_depth=6,
+    min_child_weight=5,
+    subsample=0.8,
+    colsample_bytree=0.7,
+    gamma=1,
+    reg_alpha=0.1,
+    reg_lambda=1.0,
+    n_estimators=500,
+    random_state=42,
+    n_jobs=-1,
+    verbosity=1                  
 )
 
 
