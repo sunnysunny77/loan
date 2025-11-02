@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="description" content="Give me some credit risk prediction" />
+  <meta name="keywords" content="AI ML" />
+  <meta name="author" content="D>C" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Give me some credit</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="images/pwa-logo-small.webp" />
+  <style>
+
+
+  </style>
+</head>
+
+<body>
+
+    <main>
+
+      <form>
+
+        <label>Revolving Utilization:</label>
+        <input type="number" step="any" name="RevolvingUtilizationOfUnsecuredLines"><br>
+
+        <label>Age:</label>
+        <input type="number" name="age"><br>
+
+        <label>30-59 Days Past Due:</label>
+        <input type="number" name="NumberOfTime30-59DaysPastDueNotWorse"><br>
+
+        <label>Debt Ratio:</label>
+        <input type="number" step="any" name="DebtRatio"><br>
+
+        <label>Monthly Income:</label>
+        <input type="number" step="any" name="MonthlyIncome"><br>
+
+        <label>Open Credit Lines:</label>
+        <input type="number" name="NumberOfOpenCreditLinesAndLoans"><br>
+
+        <label>90 Days Late:</label>
+        <input type="number" name="NumberOfTimes90DaysLate"><br>
+
+        <label>Real Estate Loans:</label>
+        <input type="number" name="NumberRealEstateLoansOrLines"><br>
+
+        <label>60-89 Days Past Due:</label>
+        <input type="number" name="NumberOfTime60-89DaysPastDueNotWorse"><br>
+
+        <label>Dependents:</label>
+        <input type="number" name="NumberOfDependents"><br>
+
+        <button type="submit">Predict</button>
+
+      </form>
+
+    </main>
+
+    <script>
+
+      const host = "http://127.0.0.1:8000"
+
+      const form = document.querySelector("form");
+
+      form.addEventListener("submit", async (e) => {
+
+        e.preventDefault();
+
+        const formData = new FormData(form);
+        const payload = { data: {} };
+
+        formData.forEach((value, key) => {
+          payload.data[key] = value === "" ? null : parseFloat(value);
+        });
+
+        const response = await fetch(`${host}/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json();
+        alert(`Prediction: ${result.predictions[0]} (Prob: ${result.probabilities[0].toFixed(3)})`);
+
+      });
+      
+    </script>
+
+</body>
+
+</html>
