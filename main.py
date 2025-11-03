@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[ ]:
+
 
 import torch
 import torch.nn as nn
@@ -20,9 +25,9 @@ def engineer_features(df):
         df_engi["NumberOfTimes90DaysLate"].fillna(0) +
         df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
     )
-    
+
     df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
-    
+
     df_engi["MajorDelinquencyBinary"] = (
         (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0) |
         (df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)
@@ -31,7 +36,7 @@ def engineer_features(df):
     df_engi["IsHighUtilizationBinary"] = (
         df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67
     ).astype(float).fillna(np.nan).astype("Int64") 
-    
+
     df_engi['age'] = pd.to_numeric(df_engi['age'], errors='coerce')
 
     df_engi["AgeBin"] = pd.cut(
@@ -43,7 +48,7 @@ def engineer_features(df):
         ],
         include_lowest=True
     )
-    
+
     def credit_mix_no_impute(row):
         real_estate = row["NumberRealEstateLoansOrLines"]
         open_credit = row["NumberOfOpenCreditLinesAndLoans"]
@@ -61,24 +66,24 @@ def engineer_features(df):
     df_engi["CreditMix"] = df_engi.apply(credit_mix_no_impute, axis=1)
 
     df_engi["IsCreditMixRisky"] = df_engi["CreditMix"].ne("MixedCredit").astype(float).fillna(np.nan).astype("Int64")
-    
+
     df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.67).astype(float).fillna(np.nan).astype("Int64")
-    
+
     df_engi["Has90DaysLate"] = (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0).astype(int)
-  
+
     df_engi["HasAnyLate"] = (df_engi["TotalPastDue"] > 0).astype(int)
-    
+
     df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
-    
+
     df_engi["HasHighOpenCreditLines"] = (df_engi["NumberOfOpenCreditLinesAndLoans"] > 8).astype(float).fillna(np.nan).astype("Int64")
-    
+
     df_engi["HasHighDebtLoad"] = (
         (df_engi["DebtRatio"] > 0.5) & 
         (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)
     ).astype(float).fillna(np.nan).astype("Int64")
 
     df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
-    
+
     return df_engi
 
 class NN(nn.Module):
@@ -168,32 +173,35 @@ class InputData(BaseModel):
 def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
 
     df_engi = engineer_features(df)
-    
+
     if add_was_imputed:
         for col in df_engi.columns:
             df_engi[f"Was{col}Imputed"] = df_engi[col].isna().astype(int)
-    
+
     df_num_raw = df_engi[num_col_order].copy()
     df_num_imputed = pd.DataFrame(num_imputer.transform(df_num_raw), columns=num_col_order)
-    
+
     df_num_scaled = pd.DataFrame(index=df_engi.index)
     if skewed_col_order:
         df_num_scaled[skewed_col_order] = robust_scaler.transform(df_num_imputed[skewed_col_order])
     normal_col_order = [c for c in num_col_order if c not in skewed_col_order]
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
-    
-    df_cat = df_engi[cat_col_order].copy().astype('object')
+
+    df_cat = df_engi[cat_col_order].copy().astype('category')
     for col, rare_cats in rare_maps.items():
         if col in df_cat.columns:
-            df_cat[col] = df_cat[col].replace(list(rare_cats), 'Other')
-    df_cat = df_cat.fillna('Unknown')
+            df_cat[col] = df_cat[col].cat.add_categories('Other')
+            df_cat[col] = df_cat[col].where(~df_cat[col].isin(rare_cats), 'Other')
+
+    for col in df_cat.columns:
+        df_cat[col] = df_cat[col].cat.add_categories('Unknown')
+        df_cat[col] = df_cat[col].fillna('Unknown')
 
     for col in cat_col_order:
         df_cat[col] = df_cat[col].map(cat_maps[col])
         unknown_code = cat_maps[col].get('Unknown', None)
         other_code = cat_maps[col].get('Other', 0)
-    
         if unknown_code is not None:
             df_cat[col] = df_cat[col].fillna(unknown_code)
         else:
@@ -226,7 +234,7 @@ def predict_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
     probs, preds = predict_nn(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
-    
+
 
 def predict_xgb(df: pd.DataFrame, threshold=threshold_b):
     df = preprocess(df, add_was_imputed=True)
@@ -239,3 +247,15 @@ def predict_xgb_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
     probs, preds = predict_xgb(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
+
+
+# In[ ]:
+
+
+# uvicorn main:app --host 127.0.0.1 --port 8001
+# pip install -r requirements.txt
+# python3 -m http.server
+# pm2 start venv/bin/python --name "fastapi-app" -- -m uvicorn main:app --host 127.0.0.1 --port 8001
+
+
+# In[ ]:
