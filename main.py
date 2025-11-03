@@ -1,7 +1,6 @@
-import os
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import joblib
 import pandas as pd
 import numpy as np
@@ -10,21 +9,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Union
-import pandas as pd
-import numpy as np
-import pandas as pd
-import numpy as np
 
-def engineer_features(df, expected_num_cols=None, expected_cat_cols=None):
+
+def engineer_features(df):
 
     df_engi = df.copy()
 
-    delinquency_cols = [
-        "NumberOfTime30-59DaysPastDueNotWorse",
-        "NumberOfTimes90DaysLate",
-        "NumberOfTime60-89DaysPastDueNotWorse"
-    ]
-    
     df_engi["TotalPastDue"] = (
         df_engi["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0) +
         df_engi["NumberOfTimes90DaysLate"].fillna(0) +
@@ -94,7 +84,7 @@ def engineer_features(df, expected_num_cols=None, expected_cat_cols=None):
 class NN(nn.Module):
     def __init__(self, num_numeric, cat_dims, emb_dims):
         super().__init__()
-        self.emb_layers = nn.ModuleList([nn.Embedding(cat_dim, emb_dim) for cat_dim, emb_dim in zip(cat_dims, emb_dims)])
+        self.emb_layers = nn.ModuleList([nn.Embedding(cat_dim, emb_dim) for cat_dim, emb_dim in zip(cat_dims, emb_dims, strict=True)])
         self.emb_dropout = nn.Dropout(0.3)
         self.bn_num = nn.BatchNorm1d(num_numeric)
         total_emb_dim = sum(emb_dims)
@@ -153,7 +143,10 @@ cat_dims = [len(cat_maps[c]) for c in cat_col_order]
 emb_dims = [min(50, (len(cat_maps[c]) + 1) // 2) for c in cat_col_order]
 
 model = NN(num_numeric=len(num_col_order), cat_dims=cat_dims, emb_dims=emb_dims)
-model.load_state_dict(torch.load("cr_weights.pth", map_location=device))
+
+weights_path = "cr_weights.pth"
+loaded_weights = torch.load(weights_path, map_location=device, weights_only=True)
+model.load_state_dict(loaded_weights)
 model = model.to(device)
 model.eval()
 
@@ -174,7 +167,7 @@ class InputData(BaseModel):
 
 def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
 
-    df_engi = engineer_features(df, expected_num_cols=num_col_order, expected_cat_cols=cat_col_order)
+    df_engi = engineer_features(df)
     
     if add_was_imputed:
         for col in df_engi.columns:
@@ -190,13 +183,17 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
     
-    df_cat = df_engi[cat_col_order].copy().astype(str)
+    df_cat = df_engi[cat_col_order].copy().astype('object')
     for col, rare_cats in rare_maps.items():
         if col in df_cat.columns:
-            df_cat[col] = df_cat[col].apply(lambda x: x if x not in rare_cats else 'Other')
-    df_cat = df_cat.fillna("Other")
+            df_cat[col] = df_cat[col].replace(list(rare_cats), 'Other')
+
+    df_cat = df_cat.fillna('Other')
+
     for col in cat_col_order:
-        df_cat[col] = df_cat[col].map(cat_maps[col]).fillna(0).astype(int)
+        df_cat[col] = df_cat[col].map(cat_maps[col])
+        other_code = cat_maps[col].get('Other', 0)
+        df_cat[col] = df_cat[col].fillna(other_code).astype(int)
     
     if add_was_imputed:
         df_final = pd.concat([df_num_scaled, df_cat], axis=1)
@@ -212,7 +209,6 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
         return x_num_tensor, x_cat_tensor
 
 def predict_nn(df: pd.DataFrame, threshold=threshold_a):
-    df = engineer_features(df, expected_num_cols=num_col_order, expected_cat_cols=cat_col_order)
     x_num, x_cat = preprocess(df, add_was_imputed=False)
     with torch.no_grad():
         logits = model(x_num, x_cat)
