@@ -188,7 +188,7 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
 
-    df_cat = df_engi[cat_col_order].copy().astype('category')
+    df_cat = df_engi[cat_col_order].copy().astype('category')  
     for col, rare_cats in rare_maps.items():
         if col in df_cat.columns:
             df_cat[col] = df_cat[col].cat.add_categories('Other')
@@ -259,3 +259,7 @@ def predict_xgb_endpoint(input_data: InputData):
 
 
 # In[ ]:
+
+
+
+

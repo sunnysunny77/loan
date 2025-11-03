@@ -516,8 +516,9 @@ def transform_val_test(
 
     if rare_maps:
         for col, rare_cats in rare_maps.items():
-            if col in df_copy.columns:
-                 df_copy[col] = df_copy[col].replace(list(rare_cats), 'Other')
+            if col in df_copy.columns and isinstance(df_copy[col].dtype, pd.CategoricalDtype):
+                df_copy[col] = df_copy[col].cat.add_categories('Other')     
+                df_copy[col] = df_copy[col].where(~df_copy[col].isin(rare_cats), 'Other')
 
     if num_col_order:
         for col in num_col_order:
@@ -608,7 +609,7 @@ print(dataset_summary(df_train))
 df_train.head(5)
 
 
-# In[ ]:
+# In[5]:
 
 
 # Outlier Handling
@@ -640,7 +641,7 @@ plt.show()
 df_filtered.describe()
 
 
-# In[ ]:
+# In[6]:
 
 
 # Select targets
@@ -648,14 +649,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[ ]:
+# In[7]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[ ]:
+# In[8]:
 
 
 # Split train/test
@@ -669,42 +670,42 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[ ]:
+# In[9]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[ ]:
+# In[10]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.17)
 
 
-# In[ ]:
+# In[11]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[ ]:
+# In[12]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
-# In[ ]:
+# In[13]:
 
 
 # Drop low correlated features to target
 df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.0073, bias_mode=False)
 
 
-# In[ ]:
+# In[14]:
 
 
 #log transform skewed
@@ -712,21 +713,21 @@ df_log = log_transform_skewed(df_corr)
 df_log.describe()
 
 
-# In[ ]:
+# In[15]:
 
 
 # Plot features
 plot_feature_importance(df_log, y_train, bias_mode=None)
 
 
-# In[ ]:
+# In[16]:
 
 
 # RFE numeric Feature selection
 df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=16, bias_mode=False) 
 
 
-# In[ ]:
+# In[17]:
 
 
 # Columns
@@ -736,7 +737,7 @@ print(num_col_order)
 print(cat_col_order)
 
 
-# In[ ]:
+# In[18]:
 
 
 # Impute and scale
@@ -748,14 +749,14 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler, skewed_col_or
 )
 
 
-# In[ ]:
+# In[19]:
 
 
 # Skewed columns
 print(skewed_col_order)
 
 
-# In[ ]:
+# In[20]:
 
 
 # Process
@@ -792,21 +793,21 @@ X_test = transform_val_test(
 X_train = df_processed.copy()
 
 
-# In[ ]:
+# In[21]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[ ]:
+# In[22]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[ ]:
+# In[23]:
 
 
 # Encode
@@ -828,7 +829,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[ ]:
+# In[24]:
 
 
 # Drop imputation flags for NN 
@@ -843,7 +844,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[ ]:
+# In[25]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -858,7 +859,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[ ]:
+# In[26]:
 
 
 # Convert to tensors
@@ -884,7 +885,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[ ]:
+# In[27]:
 
 
 # Datasets
@@ -911,7 +912,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[ ]:
+# In[28]:
 
 
 # Model
@@ -986,7 +987,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[ ]:
+# In[29]:
 
 
 # Loss
@@ -1013,7 +1014,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[ ]:
+# In[30]:
 
 
 # Train
@@ -1102,7 +1103,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[ ]:
+# In[31]:
 
 
 # Evaluation
@@ -1158,7 +1159,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[ ]:
+# In[32]:
 
 
 # Cast to float32 
@@ -1167,7 +1168,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[ ]:
+# In[33]:
 
 
 # Model
@@ -1197,14 +1198,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[ ]:
+# In[34]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[ ]:
+# In[35]:
 
 
 # Evaluation
@@ -1241,7 +1242,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[ ]:
+# In[36]:
 
 
 # Importance
@@ -1250,21 +1251,21 @@ plt.title("Top Feature Importances (Gain)")
 plt.show()
 
 
-# In[ ]:
+# In[37]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[ ]:
+# In[38]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[ ]:
+# In[39]:
 
 
 # Save for hosting
