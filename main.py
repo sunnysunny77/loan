@@ -187,14 +187,19 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
     for col, rare_cats in rare_maps.items():
         if col in df_cat.columns:
             df_cat[col] = df_cat[col].replace(list(rare_cats), 'Other')
-
-    df_cat = df_cat.fillna('Other')
+    df_cat = df_cat.fillna('Unknown')
 
     for col in cat_col_order:
         df_cat[col] = df_cat[col].map(cat_maps[col])
+        unknown_code = cat_maps[col].get('Unknown', None)
         other_code = cat_maps[col].get('Other', 0)
-        df_cat[col] = df_cat[col].fillna(other_code).astype(int)
     
+        if unknown_code is not None:
+            df_cat[col] = df_cat[col].fillna(unknown_code)
+        else:
+            df_cat[col] = df_cat[col].fillna(other_code)
+        df_cat[col] = df_cat[col].astype(int)
+
     if add_was_imputed:
         df_final = pd.concat([df_num_scaled, df_cat], axis=1)
         was_imputed_cols = [c for c in df_engi.columns if c.startswith("Was")]
