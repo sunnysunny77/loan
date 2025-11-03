@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[277]:
+# In[350]:
 
 
 # Imports
@@ -43,7 +43,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[278]:
+# In[483]:
 
 
 def load_datasets(base_path="./"):
@@ -167,8 +167,6 @@ def engineer_features(df):
 
     df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.67).astype(int)
 
-    df_engi["Has90DaysLate"] = (df_engi["NumberOfTimes90DaysLate"] > 0).astype(int)
-
     df_engi["HasAnyLate"] = (
         (df_engi["NumberOfTimes90DaysLate"] +
         df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
@@ -186,8 +184,6 @@ def engineer_features(df):
     df_engi["HasHighDebtLoad"] = ((df_engi["DebtRatio"] > 0.5) & (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)).astype(int)
 
     df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
-
-    df_engi["IncomePerDependent"] = df_engi["MonthlyIncome"] / (df_engi["NumberOfDependents"] + 1)
 
     print("Added engineer features")
 
@@ -595,7 +591,7 @@ def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
     return f_beta
 
 
-# In[279]:
+# In[484]:
 
 
 # Load datasets
@@ -603,7 +599,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[280]:
+# In[485]:
 
 
 #summary
@@ -611,7 +607,7 @@ print(dataset_summary(df_train))
 df_train.head(5)
 
 
-# In[281]:
+# In[486]:
 
 
 # Outlier Handling
@@ -645,7 +641,7 @@ plt.show()
 df_filtered.describe()
 
 
-# In[282]:
+# In[487]:
 
 
 # Select targets
@@ -653,14 +649,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[283]:
+# In[488]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[284]:
+# In[489]:
 
 
 # Split train/test
@@ -674,42 +670,42 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[285]:
+# In[490]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[286]:
+# In[491]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.17)
 
 
-# In[287]:
+# In[492]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[288]:
+# In[493]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
-# In[289]:
+# In[494]:
 
 
 # Drop low correlated features to target
 df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.008, bias_mode=False)
 
 
-# In[290]:
+# In[495]:
 
 
 #log transform skewed
@@ -717,21 +713,21 @@ df_log = log_transform_skewed(df_corr)
 df_log.describe()
 
 
-# In[291]:
+# In[496]:
 
 
 # Plot features
 plot_feature_importance(df_log, y_train, bias_mode=None)
 
 
-# In[296]:
+# In[499]:
 
 
 # RFE numeric Feature selection
-df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=18, bias_mode=False) 
+df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=15, bias_mode=False) 
 
 
-# In[297]:
+# In[500]:
 
 
 # Columns
@@ -741,7 +737,7 @@ print(num_col_order)
 print(cat_col_order)
 
 
-# In[298]:
+# In[501]:
 
 
 # Impute and scale
@@ -753,14 +749,14 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler, skewed_col_or
 )
 
 
-# In[299]:
+# In[502]:
 
 
 # Skewed columns
 print(skewed_col_order)
 
 
-# In[300]:
+# In[503]:
 
 
 # Process
@@ -797,21 +793,21 @@ X_test = transform_val_test(
 X_train = df_processed.copy()
 
 
-# In[301]:
+# In[504]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[302]:
+# In[505]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[303]:
+# In[506]:
 
 
 # Encode
@@ -833,7 +829,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[304]:
+# In[507]:
 
 
 # Drop imputation flags for NN 
@@ -848,7 +844,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[305]:
+# In[508]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -863,7 +859,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[306]:
+# In[509]:
 
 
 # Convert to tensors
@@ -889,7 +885,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[307]:
+# In[510]:
 
 
 # Datasets
@@ -916,7 +912,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[308]:
+# In[511]:
 
 
 # Model
@@ -991,7 +987,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[309]:
+# In[512]:
 
 
 # Loss
@@ -1018,7 +1014,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[310]:
+# In[513]:
 
 
 # Train
@@ -1107,7 +1103,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[311]:
+# In[514]:
 
 
 # Evaluation
@@ -1163,7 +1159,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[312]:
+# In[515]:
 
 
 # Cast to float32 
@@ -1172,7 +1168,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[313]:
+# In[516]:
 
 
 # Model
@@ -1202,14 +1198,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[314]:
+# In[517]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[315]:
+# In[518]:
 
 
 # Evaluation
@@ -1246,7 +1242,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[316]:
+# In[519]:
 
 
 # Importance
@@ -1255,21 +1251,21 @@ plt.title("Top Feature Importances (Gain)")
 plt.show()
 
 
-# In[317]:
+# In[520]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[318]:
+# In[521]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[319]:
+# In[522]:
 
 
 # Save for hosting

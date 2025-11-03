@@ -69,8 +69,6 @@ def engineer_features(df):
 
     df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.67).astype(float).fillna(np.nan).astype("Int64")
 
-    df_engi["Has90DaysLate"] = (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0).astype(int)
-
     df_engi["HasAnyLate"] = (df_engi["TotalPastDue"] > 0).astype(int)
 
     df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
@@ -83,8 +81,6 @@ def engineer_features(df):
     ).astype(float).fillna(np.nan).astype("Int64")
 
     df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
-
-    df_engi["IncomePerDependent"] = df_engi["MonthlyIncome"] / (df_engi["NumberOfDependents"].fillna(0) + 1)
 
     return df_engi
 
