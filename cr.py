@@ -602,7 +602,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[44]:
+# In[4]:
 
 
 #summary
@@ -703,7 +703,7 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
 
 
 # Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.0093, bias_mode=False)
+df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.0073, bias_mode=False)
 
 
 # In[14]:
@@ -1123,7 +1123,7 @@ y_val_probs = np.array(y_val_probs)
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
 f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2)
-best_thresh = thresholds[np.argmax(f_beta_scores)]
+best_thresh_a = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
 with torch.no_grad():
@@ -1134,7 +1134,7 @@ with torch.no_grad():
         y_test_probs.extend(probs.cpu().numpy())
 
 y_test_probs = np.array(y_test_probs)
-y_test_pred_opt = (y_test_probs > best_thresh).astype(int)
+y_test_pred_opt = (y_test_probs > best_thresh_a).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
 report = classification_report(y_test, y_test_pred_opt, target_names=target_names)
@@ -1144,7 +1144,7 @@ cm = confusion_matrix(y_test, y_test_pred_opt)
 tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 
-print("Best threshold for F1:", best_thresh)
+print("Best threshold for F1:", best_thresh_a)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -1156,7 +1156,7 @@ plt.figure(figsize=(6,5))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=target_names, yticklabels=target_names)
 plt.xlabel("Predicted")
 plt.ylabel("Actual")
-plt.title(f"Confusion Matrix (Threshold = {best_thresh:.2f})")
+plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
@@ -1266,7 +1266,7 @@ torch.save(model.state_dict(), "cr_weights.pth")
 model_b.save_model("cr_b.json")
 
 
-# In[42]:
+# In[39]:
 
 
 # Save for hosting
@@ -1275,7 +1275,8 @@ for col in cat_col_order:
     unique_vals = X_train[col].dropna().astype(str).unique()
     cat_maps[col] = {val: idx for idx, val in enumerate(sorted(unique_vals))}
 
-print(best_thresh)
+print(best_thresh_a)
+print(best_thresh_b)
 print(num_imputer)
 print(cat_imputer)
 print(robust_scaler)
@@ -1285,7 +1286,8 @@ print(cat_col_order)
 print(skewed_col_order)
 print(rare_maps)
 
-joblib.dump(best_thresh, "threshold.pkl")
+joblib.dump(best_thresh_a, "threshold_a.pkl")
+joblib.dump(best_thresh_b, "threshold_b.pkl")
 joblib.dump(num_imputer, "num_imputer.pkl")
 joblib.dump(cat_imputer, "cat_imputer.pkl")
 joblib.dump(robust_scaler, "robust_scaler.pkl")

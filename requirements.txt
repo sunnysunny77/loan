@@ -8,4 +8,3 @@ joblib
 scikit-learn
 fastapi
 pydantic
-uvicorn

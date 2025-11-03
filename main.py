@@ -5,28 +5,47 @@ import torch.nn.functional as F
 import joblib
 import pandas as pd
 import numpy as np
+import xgboost as xgb
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Union
+import pandas as pd
+import numpy as np
+import pandas as pd
+import numpy as np
 
 def engineer_features(df, expected_num_cols=None, expected_cat_cols=None):
+
     df_engi = df.copy()
-    df_engi_temp = df_engi.fillna(0)
+
+    delinquency_cols = [
+        "NumberOfTime30-59DaysPastDueNotWorse",
+        "NumberOfTimes90DaysLate",
+        "NumberOfTime60-89DaysPastDueNotWorse"
+    ]
+    
     df_engi["TotalPastDue"] = (
-        df_engi_temp["NumberOfTime30-59DaysPastDueNotWorse"]
-        + df_engi_temp["NumberOfTimes90DaysLate"]
-        + df_engi_temp["NumberOfTime60-89DaysPastDueNotWorse"]
+        df_engi["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0) +
+        df_engi["NumberOfTimes90DaysLate"].fillna(0) +
+        df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
     )
+    
     df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
+    
     df_engi["MajorDelinquencyBinary"] = (
-        (df_engi_temp["NumberOfTimes90DaysLate"] > 0)
-        | (df_engi_temp["NumberOfTime60-89DaysPastDueNotWorse"] > 0)
+        (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0) |
+        (df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)
     ).astype(int)
-    df_engi["IsHighUtilizationBinary"] = (df_engi_temp["RevolvingUtilizationOfUnsecuredLines"] > 0.67).astype(int)
-    age_notna = df_engi["age"].notna()
-    df_engi.loc[age_notna, "AgeBin"] = pd.cut(
-        df_engi.loc[age_notna, "age"],
+
+    df_engi["IsHighUtilizationBinary"] = (
+        df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67
+    ).astype(float).fillna(np.nan).astype("Int64") 
+    
+    df_engi['age'] = pd.to_numeric(df_engi['age'], errors='coerce')
+
+    df_engi["AgeBin"] = pd.cut(
+        df_engi["age"],
         bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
         labels=[
             "Age_0_25", "Age_25_35", "Age_35_45", "Age_45_55",
@@ -34,40 +53,42 @@ def engineer_features(df, expected_num_cols=None, expected_cat_cols=None):
         ],
         include_lowest=True
     )
-    def credit_mix(row):
-        if pd.isna(row["NumberRealEstateLoansOrLines"]) or pd.isna(row["NumberOfOpenCreditLinesAndLoans"]):
-            return np.nan
-        if row["NumberRealEstateLoansOrLines"] == 0 and row["NumberOfOpenCreditLinesAndLoans"] == 0:
+    
+    def credit_mix_no_impute(row):
+        real_estate = row["NumberRealEstateLoansOrLines"]
+        open_credit = row["NumberOfOpenCreditLinesAndLoans"]
+        if pd.isna(real_estate) or pd.isna(open_credit):
+            return np.nan 
+        elif real_estate == 0 and open_credit == 0:
             return "NoCredit"
-        elif row["NumberRealEstateLoansOrLines"] > 0 and row["NumberOfOpenCreditLinesAndLoans"] == 0:
+        elif real_estate > 0 and open_credit == 0:
             return "RealEstateOnly"
-        elif row["NumberRealEstateLoansOrLines"] == 0 and row["NumberOfOpenCreditLinesAndLoans"] > 0:
+        elif real_estate == 0 and open_credit > 0:
             return "OtherCreditOnly"
         else:
             return "MixedCredit"
-    df_engi["CreditMix"] = df_engi.apply(credit_mix, axis=1)
-    df_engi["IsCreditMixRisky"] = df_engi["CreditMix"].ne("MixedCredit").astype(int)
-    df_engi["HasDebtRatioHigh"] = (df_engi_temp["DebtRatio"] > 0.67).astype(int)
-    df_engi["Has90DaysLate"] = (df_engi_temp["NumberOfTimes90DaysLate"] > 0).astype(int)
-    df_engi["HasAnyLate"] = (
-        df_engi_temp["NumberOfTimes90DaysLate"]
-        + df_engi_temp["NumberOfTime30-59DaysPastDueNotWorse"]
-        + df_engi_temp["NumberOfTime60-89DaysPastDueNotWorse"]
-        > 0
-    ).astype(int)
-    df_engi["HasMultipleLate"] = (
-        df_engi_temp["NumberOfTimes90DaysLate"]
-        + df_engi_temp["NumberOfTime30-59DaysPastDueNotWorse"]
-        + df_engi_temp["NumberOfTime60-89DaysPastDueNotWorse"]
-        >= 2
-    ).astype(int)
-    df_engi["HasHighOpenCreditLines"] = (df_engi_temp["NumberOfOpenCreditLinesAndLoans"] > 8).astype(int)
+
+    df_engi["CreditMix"] = df_engi.apply(credit_mix_no_impute, axis=1)
+
+    df_engi["IsCreditMixRisky"] = df_engi["CreditMix"].ne("MixedCredit").astype(float).fillna(np.nan).astype("Int64")
+    
+    df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.67).astype(float).fillna(np.nan).astype("Int64")
+    
+    df_engi["Has90DaysLate"] = (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0).astype(int)
+  
+    df_engi["HasAnyLate"] = (df_engi["TotalPastDue"] > 0).astype(int)
+    
+    df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
+    
+    df_engi["HasHighOpenCreditLines"] = (df_engi["NumberOfOpenCreditLinesAndLoans"] > 8).astype(float).fillna(np.nan).astype("Int64")
+    
     df_engi["HasHighDebtLoad"] = (
-        (df_engi_temp["DebtRatio"] > 0.5) & (df_engi_temp["RevolvingUtilizationOfUnsecuredLines"] > 0.67)
-    ).astype(int)
-    df_engi["DebtToIncomeRatio"] = df_engi_temp["DebtRatio"] / (df_engi_temp["MonthlyIncome"] + 1e-3)
-    for col in ["MonthlyIncome", "NumberOfDependents"]:
-        df_engi[f"{col}_was_missing"] = df[col].isna().astype(int)
+        (df_engi["DebtRatio"] > 0.5) & 
+        (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)
+    ).astype(float).fillna(np.nan).astype("Int64")
+
+    df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
+    
     return df_engi
 
 class NN(nn.Module):
@@ -113,6 +134,8 @@ class NN(nn.Module):
         x_combined = x_main + x_skip
         return self.out(x_combined).squeeze(1)
 
+model_b = xgb.XGBClassifier()
+model_b.load_model("cr_b.json")
 num_imputer = joblib.load("num_imputer.pkl")
 cat_imputer = joblib.load("cat_imputer.pkl")
 robust_scaler = joblib.load("robust_scaler.pkl")
@@ -121,7 +144,8 @@ cat_maps = joblib.load("cat_maps.pkl")
 cat_col_order = joblib.load("cat_col_order.pkl")
 num_col_order = joblib.load("num_col_order.pkl")
 skewed_col_order = joblib.load("skewed_col_order.pkl")
-threshold = joblib.load("threshold.pkl")
+threshold_a = joblib.load("threshold_a.pkl")
+threshold_b = joblib.load("threshold_b.pkl")
 rare_maps = joblib.load("rare_maps.pkl")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,37 +172,69 @@ app.add_middleware(
 class InputData(BaseModel):
     data: Dict[str, Union[str, float, int, None]]
 
-def preprocess_input(df: pd.DataFrame):
-    df_num_raw = df[num_col_order].copy()
+def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
+
+    df_engi = engineer_features(df, expected_num_cols=num_col_order, expected_cat_cols=cat_col_order)
+    
+    if add_was_imputed:
+        for col in df_engi.columns:
+            df_engi[f"Was{col}Imputed"] = df_engi[col].isna().astype(int)
+    
+    df_num_raw = df_engi[num_col_order].copy()
     df_num_imputed = pd.DataFrame(num_imputer.transform(df_num_raw), columns=num_col_order)
-    df_num_scaled = pd.DataFrame(index=df.index)
+    
+    df_num_scaled = pd.DataFrame(index=df_engi.index)
     if skewed_col_order:
         df_num_scaled[skewed_col_order] = robust_scaler.transform(df_num_imputed[skewed_col_order])
     normal_col_order = [c for c in num_col_order if c not in skewed_col_order]
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
-    x_num_tensor = torch.tensor(df_num_scaled.values, dtype=torch.float32).to(device)
-    df_cat = df[cat_col_order].copy().astype(str)
+    
+    df_cat = df_engi[cat_col_order].copy().astype(str)
     for col, rare_cats in rare_maps.items():
         if col in df_cat.columns:
             df_cat[col] = df_cat[col].apply(lambda x: x if x not in rare_cats else 'Other')
     df_cat = df_cat.fillna("Other")
     for col in cat_col_order:
         df_cat[col] = df_cat[col].map(cat_maps[col]).fillna(0).astype(int)
-    x_cat_tensor = torch.tensor(df_cat.values, dtype=torch.int64).to(device)
-    return x_num_tensor, x_cat_tensor
+    
+    if add_was_imputed:
+        df_final = pd.concat([df_num_scaled, df_cat], axis=1)
+        was_imputed_cols = [c for c in df_engi.columns if c.startswith("Was")]
+        df_final = pd.concat([df_final, df_engi[was_imputed_cols]], axis=1)
+        df_final = df_final.astype(np.float32)
+        trained_features = model_b.get_booster().feature_names
+        df_final = df_final.reindex(columns=trained_features, fill_value=0.0)
+        return df_final
+    else:
+        x_num_tensor = torch.tensor(df_num_scaled.values, dtype=torch.float32).to(device)
+        x_cat_tensor = torch.tensor(df_cat.values, dtype=torch.int64).to(device)
+        return x_num_tensor, x_cat_tensor
 
-def predict(df: pd.DataFrame, threshold=threshold):
+def predict_nn(df: pd.DataFrame, threshold=threshold_a):
     df = engineer_features(df, expected_num_cols=num_col_order, expected_cat_cols=cat_col_order)
-    x_num, x_cat = preprocess_input(df)
+    x_num, x_cat = preprocess(df, add_was_imputed=False)
     with torch.no_grad():
         logits = model(x_num, x_cat)
         probs = torch.sigmoid(logits).cpu().numpy()
         preds = (probs > threshold).astype(int)
     return probs, preds
 
-@app.post("/predict")
+@app.post("/predict_nn")
 def predict_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
-    probs, preds = predict(df)
+    probs, preds = predict_nn(df)
+    return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
+    
+
+def predict_xgb(df: pd.DataFrame, threshold=threshold_b):
+    df = preprocess(df, add_was_imputed=True)
+    probs = model_b.predict_proba(df)[:, 1]
+    preds = (probs > threshold).astype(int)
+    return probs, preds
+
+@app.post("/predict_xgb")
+def predict_xgb_endpoint(input_data: InputData):
+    df = pd.DataFrame([input_data.data]).replace("", np.nan)
+    probs, preds = predict_xgb(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
