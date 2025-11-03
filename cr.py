@@ -187,7 +187,7 @@ def engineer_features(df):
 
     df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
 
-    print(f"Added engineer features")
+    print("Added engineer features")
 
     return df_engi
 
@@ -395,20 +395,16 @@ def select_features(df, target, n_features_to_select=20, random_state=42, bias_m
     for col in cat_cols:
         df_temp[col] = df_temp[col].astype('category').cat.codes
 
-    X_train_full, X_val_full, y_train, y_val = train_test_split(
-        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
-    )
+    X = df_temp.drop(columns=cat_cols).astype(np.float32)
+    y = target
 
-    X_train = X_train_full.drop(columns=cat_cols).astype(np.float32)
-    X_val = X_val_full.drop(columns=cat_cols).astype(np.float32)
-
-    neg_count = sum(y_train == 0)
-    pos_count = sum(y_train == 1)
+    neg_count = sum(y == 0)
+    pos_count = sum(y == 1)
 
     if bias_mode is True:
-        scale_pos_weight = pos_count / neg_count
+        scale_pos_weight = neg_count / pos_count 
     elif bias_mode is False:
-        scale_pos_weight = neg_count / pos_count
+        scale_pos_weight = pos_count / neg_count
     else:
         scale_pos_weight = 1
 
@@ -432,20 +428,19 @@ def select_features(df, target, n_features_to_select=20, random_state=42, bias_m
     )
 
     selector = RFE(estimator=base_model, n_features_to_select=n_features_to_select, step=1)
-    selector.fit(X_train, y_train)
+    selector.fit(X, y)
 
-    selected_features = X_train.columns[selector.support_].tolist()
-    rfe_cols_to_drop = [col for col in X_train.columns if col not in selected_features]
+    selected_num_features = X.columns[selector.support_].tolist()
+    rfe_num_cols_to_drop = [col for col in X.columns if col not in selected_num_features]
 
-    final_features = selected_features + [col for col in cat_cols if col in df.columns]
-    df_selected = df[final_features].copy()
+    df_selected = df[
+        selected_num_features + [col for col in cat_cols if col in df.columns]
+    ].copy()
 
-    df_selected = df_selected.drop(columns=rfe_cols_to_drop, errors='ignore')
+    print(f"Dropped: {len(rfe_num_cols_to_drop)} numerical features via RFE")
+    print(f"Dropped cols: {rfe_num_cols_to_drop}")
 
-    print(f"Dropped: {len(rfe_cols_to_drop)} select features col")
-    print(f"Dropped cols: {rfe_cols_to_drop}")
-
-    return df_selected, rfe_cols_to_drop
+    return df_selected, rfe_num_cols_to_drop
 
 def impute_and_scale(df, threshold=1.0, num_col_order=None, cat_col_order=None):
 
@@ -519,7 +514,8 @@ def transform_val_test(
     if rare_maps:
         for col, rare_cats in rare_maps.items():
             if col in df_copy.columns:
-                df_copy[col] = df_copy[col].apply(lambda x: x if x not in rare_cats else 'Other')
+                mapping = {cat: 'Other' for cat in rare_cats}
+                df_copy[col].replace(mapping, inplace=True)
 
     if num_col_order:
         for col in num_col_order:
@@ -878,7 +874,7 @@ y_test_tensor = torch.tensor(y_test, dtype=torch.long)
 
 classes = np.unique(y_train)
 class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
-class_weight_dict = dict(zip(classes, class_weights))
+class_weight_dict = dict(zip(classes, class_weights, strict=True))
 weights_tensor = torch.tensor([class_weight_dict[int(c)] for c in y_train], dtype=torch.float32)
 
 print("Numeric input shape:", X_train_num_tensor.shape)
@@ -923,7 +919,7 @@ class NN(nn.Module):
 
         self.emb_layers = nn.ModuleList([
             nn.Embedding(cat_dim, emb_dim)
-            for cat_dim, emb_dim in zip(cat_dims, emb_dims)
+            for cat_dim, emb_dim in zip(cat_dims, emb_dims, strict=True)
         ])
         self.emb_dropout = nn.Dropout(0.3)
 
@@ -1112,7 +1108,7 @@ model.eval()
 y_val_probs = []
 
 with torch.no_grad():
-    for x_num, x_cat, yb in val_loader:
+    for x_num, x_cat, _ in val_loader:  
         x_num, x_cat = x_num.to(device), x_cat.to(device)
         outputs = model(x_num, x_cat)
         probs = torch.sigmoid(outputs)
