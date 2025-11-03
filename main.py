@@ -84,6 +84,8 @@ def engineer_features(df):
 
     df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
 
+    df_engi["IncomePerDependent"] = df_engi["MonthlyIncome"] / (df_engi["NumberOfDependents"].fillna(0) + 1)
+
     return df_engi
 
 class NN(nn.Module):
@@ -148,9 +150,9 @@ cat_dims = [len(cat_maps[c]) for c in cat_col_order]
 emb_dims = [min(50, (len(cat_maps[c]) + 1) // 2) for c in cat_col_order]
 
 model = NN(num_numeric=len(num_col_order), cat_dims=cat_dims, emb_dims=emb_dims)
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 weights_path = "cr_weights.pth"
-loaded_weights = torch.load(weights_path, map_location=device, weights_only=True)
+loaded_weights = torch.load(weights_path, map_location=device) 
 model.load_state_dict(loaded_weights)
 model = model.to(device)
 model.eval()
