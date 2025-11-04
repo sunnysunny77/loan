@@ -37,18 +37,6 @@ def engineer_features(df):
         df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67
     ).astype(float).fillna(np.nan).astype("Int64") 
 
-    df_engi['age'] = pd.to_numeric(df_engi['age'], errors='coerce')
-
-    df_engi["AgeBin"] = pd.cut(
-        df_engi["age"],
-        bins=[0, 25, 35, 45, 55, 65, 75, 85, 100],
-        labels=[
-            "Age_0_25", "Age_25_35", "Age_35_45", "Age_45_55",
-            "Age_55_65", "Age_65_75", "Age_75_85", "Age_85_100"
-        ],
-        include_lowest=True
-    )
-
     def credit_mix_no_impute(row):
         real_estate = row["NumberRealEstateLoansOrLines"]
         open_credit = row["NumberOfOpenCreditLinesAndLoans"]
@@ -73,14 +61,10 @@ def engineer_features(df):
 
     df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
 
-    df_engi["HasHighOpenCreditLines"] = (df_engi["NumberOfOpenCreditLinesAndLoans"] > 8).astype(float).fillna(np.nan).astype("Int64")
-
     df_engi["HasHighDebtLoad"] = (
         (df_engi["DebtRatio"] > 0.5) & 
         (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)
     ).astype(float).fillna(np.nan).astype("Int64")
-
-    df_engi["DebtToIncomeRatio"] = df_engi["DebtRatio"] / (df_engi["MonthlyIncome"] + 1e-3)
 
     return df_engi
 
