@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
+# In[1]:
 
 
 import torch
@@ -15,56 +15,53 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Union
 
-
-def engineer_features(df):
-
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df_engi = df.copy()
 
-    df_engi["TotalPastDue"] = (
-        df_engi["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0) +
-        df_engi["NumberOfTimes90DaysLate"].fillna(0) +
-        df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
+    # === Combined Past Due (local constant) ===
+    TotalPastDue = (
+        df_engi["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0)
+        + df_engi["NumberOfTimes90DaysLate"].fillna(0)
+        + df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
     )
 
-    df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
+    # === Delinquency Features ===
+    df_engi["HasAnyLate"] = (TotalPastDue > 0).astype(int)
+    df_engi["HasMultipleLate"] = (TotalPastDue >= 2).astype(int)
+    df_engi["HasDelinquencyBinary"] = df_engi["HasAnyLate"]
 
     df_engi["MajorDelinquencyBinary"] = (
-        (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0) |
-        (df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)
+        (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0)
+        | (df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)
     ).astype(int)
 
-    df_engi["IsHighUtilizationBinary"] = (
-        df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67
-    ).astype(float).fillna(np.nan).astype("Int64") 
+    # Ratios
+    df_engi["LatePaymentsPerAge"] = (
+        TotalPastDue / (df_engi["age"].fillna(np.nan) + 1)
+    )
+    df_engi["LatePaymentsPerCreditLine"] = (
+        TotalPastDue / (df_engi["NumberOfOpenCreditLinesAndLoans"].fillna(np.nan) + 1)
+    )
+    df_engi["DelinquencyFrequency"] = df_engi["LatePaymentsPerAge"]
 
-    def credit_mix_no_impute(row):
-        real_estate = row["NumberRealEstateLoansOrLines"]
-        open_credit = row["NumberOfOpenCreditLinesAndLoans"]
-        if pd.isna(real_estate) or pd.isna(open_credit):
-            return np.nan 
-        elif real_estate == 0 and open_credit == 0:
-            return "NoCredit"
-        elif real_estate > 0 and open_credit == 0:
-            return "RealEstateOnly"
-        elif real_estate == 0 and open_credit > 0:
-            return "OtherCreditOnly"
-        else:
-            return "MixedCredit"
+    # === Utilization Features ===
+    df_engi["NormalizedUtilization"] = np.sqrt(df_engi["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
+    df_engi["HighUtilizationFlag"] = (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67).astype(int)
 
-    df_engi["CreditMix"] = df_engi.apply(credit_mix_no_impute, axis=1)
+    # === Interaction Features ===
+    df_engi["DelinquencyInteraction"] = TotalPastDue * df_engi["RevolvingUtilizationOfUnsecuredLines"].fillna(0)
 
-    df_engi["IsCreditMixRisky"] = df_engi["CreditMix"].ne("MixedCredit").astype(float).fillna(np.nan).astype("Int64")
+    # === Debt Features ===
+    df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.8).astype(int)
 
-    df_engi["HasDebtRatioHigh"] = (df_engi["DebtRatio"] > 0.67).astype(float).fillna(np.nan).astype("Int64")
+    # === Bucketed Features ===
+    util_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
+    util_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
+    df_engi["UtilizationBucket"] = pd.cut(df_engi["RevolvingUtilizationOfUnsecuredLines"].fillna(0), bins=util_bins, labels=util_labels)
 
-    df_engi["HasAnyLate"] = (df_engi["TotalPastDue"] > 0).astype(int)
-
-    df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
-
-    df_engi["HasHighDebtLoad"] = (
-        (df_engi["DebtRatio"] > 0.5) & 
-        (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67)
-    ).astype(float).fillna(np.nan).astype("Int64")
+    late_bins = [-1, 0, 1, 3, 6, np.inf]
+    late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
+    df_engi["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
 
     return df_engi
 
