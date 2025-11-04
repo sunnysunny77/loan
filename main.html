@@ -7551,18 +7551,6 @@ a.anchor-link {
         <span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.67</span>
     <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"Int64"</span><span class="p">)</span> 
     
-    <span class="n">df_engi</span><span class="p">[</span><span class="s1">'age'</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s1">'age'</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s1">'coerce'</span><span class="p">)</span>
-
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"AgeBin"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span>
-        <span class="n">df_engi</span><span class="p">[</span><span class="s2">"age"</span><span class="p">],</span>
-        <span class="n">bins</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">25</span><span class="p">,</span> <span class="mi">35</span><span class="p">,</span> <span class="mi">45</span><span class="p">,</span> <span class="mi">55</span><span class="p">,</span> <span class="mi">65</span><span class="p">,</span> <span class="mi">75</span><span class="p">,</span> <span class="mi">85</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>
-        <span class="n">labels</span><span class="o">=</span><span class="p">[</span>
-            <span class="s2">"Age_0_25"</span><span class="p">,</span> <span class="s2">"Age_25_35"</span><span class="p">,</span> <span class="s2">"Age_35_45"</span><span class="p">,</span> <span class="s2">"Age_45_55"</span><span class="p">,</span>
-            <span class="s2">"Age_55_65"</span><span class="p">,</span> <span class="s2">"Age_65_75"</span><span class="p">,</span> <span class="s2">"Age_75_85"</span><span class="p">,</span> <span class="s2">"Age_85_100"</span>
-        <span class="p">],</span>
-        <span class="n">include_lowest</span><span class="o">=</span><span class="kc">True</span>
-    <span class="p">)</span>
-    
     <span class="k">def</span><span class="w"> </span><span class="nf">credit_mix_no_impute</span><span class="p">(</span><span class="n">row</span><span class="p">):</span>
         <span class="n">real_estate</span> <span class="o">=</span> <span class="n">row</span><span class="p">[</span><span class="s2">"NumberRealEstateLoansOrLines"</span><span class="p">]</span>
         <span class="n">open_credit</span> <span class="o">=</span> <span class="n">row</span><span class="p">[</span><span class="s2">"NumberOfOpenCreditLinesAndLoans"</span><span class="p">]</span>
@@ -7587,14 +7575,10 @@ a.anchor-link {
     
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasMultipleLate"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
     
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasHighOpenCreditLines"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfOpenCreditLinesAndLoans"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">8</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"Int64"</span><span class="p">)</span>
-    
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasHighDebtLoad"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
         <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">&amp;</span> 
         <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.67</span><span class="p">)</span>
     <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s2">"Int64"</span><span class="p">)</span>
-
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"DebtToIncomeRatio"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span> <span class="o">+</span> <span class="mf">1e-3</span><span class="p">)</span>
     
     <span class="k">return</span> <span class="n">df_engi</span>
 
