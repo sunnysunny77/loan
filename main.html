@@ -7530,52 +7530,45 @@ a.anchor-link {
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Union</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">engineer_features</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+
     <span class="n">df_engi</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
 
-    <span class="c1"># === Combined Past Due (local constant) ===</span>
-    <span class="n">TotalPastDue</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfTime30-59DaysPastDueNotWorse"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="o">+</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfTimes90DaysLate"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
         <span class="o">+</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfTime60-89DaysPastDueNotWorse"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
     <span class="p">)</span>
 
-    <span class="c1"># === Delinquency Features ===</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasAnyLate"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">TotalPastDue</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasMultipleLate"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">TotalPastDue</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasDelinquencyBinary"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasAnyLate"</span><span class="p">]</span>
+    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasDelinquencyBinary"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+
+    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasMultipleLate"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"MajorDelinquencyBinary"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
         <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfTimes90DaysLate"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
         <span class="o">|</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfTime60-89DaysPastDueNotWorse"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
     <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
-    <span class="c1"># Ratios</span>
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"LatePaymentsPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">TotalPastDue</span> <span class="o">/</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
     <span class="p">)</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">TotalPastDue</span> <span class="o">/</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfOpenCreditLinesAndLoans"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
-    <span class="p">)</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"DelinquencyFrequency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"LatePaymentsPerAge"</span><span class="p">]</span>
 
-    <span class="c1"># === Utilization Features ===</span>
+    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"NumberOfOpenCreditLinesAndLoans"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"NormalizedUtilization"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HighUtilizationFlag"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.67</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
-    <span class="c1"># === Interaction Features ===</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"DelinquencyInteraction"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDue</span> <span class="o">*</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"DelinquencyInteraction"</span><span class="p">]</span> <span class="o">=</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">]</span> <span class="o">*</span> <span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
-    <span class="c1"># === Debt Features ===</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"HasDebtRatioHigh"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.8</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-
-    <span class="c1"># === Bucketed Features ===</span>
     <span class="n">util_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.5</span><span class="p">,</span> <span class="mi">10</span><span class="p">]</span>
     <span class="n">util_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Very Low"</span><span class="p">,</span> <span class="s2">"Low"</span><span class="p">,</span> <span class="s2">"Moderate"</span><span class="p">,</span> <span class="s2">"High"</span><span class="p">,</span> <span class="s2">"Very High"</span><span class="p">,</span> <span class="s2">"Extreme"</span><span class="p">]</span>
     <span class="n">df_engi</span><span class="p">[</span><span class="s2">"UtilizationBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">bins</span><span class="o">=</span><span class="n">util_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">util_labels</span><span class="p">)</span>
 
     <span class="n">late_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">]</span>
     <span class="n">late_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"NoLate"</span><span class="p">,</span> <span class="s2">"FewLate"</span><span class="p">,</span> <span class="s2">"ModerateLate"</span><span class="p">,</span> <span class="s2">"FrequentLate"</span><span class="p">,</span> <span class="s2">"ChronicLate"</span><span class="p">]</span>
-    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"LatePaymentBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">TotalPastDue</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">late_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">late_labels</span><span class="p">)</span>
+    <span class="n">df_engi</span><span class="p">[</span><span class="s2">"LatePaymentBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">df_engi</span><span class="p">[</span><span class="s2">"TotalPastDue"</span><span class="p">],</span> <span class="n">bins</span><span class="o">=</span><span class="n">late_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">late_labels</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">df_engi</span>
 
@@ -7750,7 +7743,7 @@ a.anchor-link {
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
+<div class="jp-InputPrompt jp-InputArea-prompt">In [2]:</div>
 <div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="cm-editor cm-s-jupyter">
 <div class="highlight hl-ipython3"><pre><span></span><span class="c1"># uvicorn main:app --host 127.0.0.1 --port 8001</span>
@@ -7763,6 +7756,34 @@ a.anchor-link {
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c78b47d0-c755-4ffe-a296-e25ee8ff4110">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
+<div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="cm-editor cm-s-jupyter">
+<div class="highlight hl-ipython3"><pre><span></span> 
+</pre></div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c16cdfca-51bf-45b6-ad55-4eec00eb1c2b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
+<div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="cm-editor cm-s-jupyter">
+<div class="highlight hl-ipython3"><pre><span></span> 
+</pre></div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1861c565-eb87-4afe-89e4-4ec130d31f19">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
