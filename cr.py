@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[162]:
+# In[1]:
 
 
 # Imports
@@ -34,7 +34,7 @@ lr = 1e-3
 weight_decay = 1e-4
 batch_size = 32
 num_epochs = 75
-num_runs = 1
+num_runs = 3
 max_patience = 13
 
 # pd 
@@ -42,7 +42,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[171]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
@@ -124,40 +124,72 @@ def engineer_features(df):
     df_e = df.copy()
 
     TotalPastDue = (
-        df_e["NumberOfTime30-59DaysPastDueNotWorse"] +
-        df_e["NumberOfTimes90DaysLate"] +
-        df_e["NumberOfTime60-89DaysPastDueNotWorse"]
+        df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0)
+        + df_e["NumberOfTimes90DaysLate"].fillna(0)
+        + df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
     )
 
-    RevolvingUtilizationOfUnsecuredLines = df_e["RevolvingUtilizationOfUnsecuredLines"]
+    RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"])
+
+    df_e["MajorDelinquencyBinary"] = (
+        (df_e["NumberOfTimes90DaysLate"] > 0) |
+        (df_e["NumberOfTime60-89DaysPastDueNotWorse"] > 0)
+    ).astype(int)
+
+    df_e["HasDelinquencies"] = (TotalPastDue > 0).astype(int)
 
     df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
 
-    df_e["HighUtilizationFlag"] = (RevolvingUtilizationOfUnsecuredLines > 0.8).astype(int)
-
     df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
 
-    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
+    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
 
-    df_e["90DaysLate_Squared"] = df_e["NumberOfTimes90DaysLate"] ** 2
+    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (df_e["age"].replace(0, np.nan))
 
     df_e["LatePaymentsPerAge"] = TotalPastDue / (df_e["age"].replace(0, np.nan))
 
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / (df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan))
 
+    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
+
+    df_e['90DaysLate_Squared'] = df_e['NumberOfTimes90DaysLate'] ** 2
+
+    df_e["LogDebtRatio"] = np.log1p(df_e["DebtRatio"])
+
+    df_e["LogMonthlyIncome"] = np.log1p(df_e["MonthlyIncome"])
+
+    df_e["IncomePerCreditLine"] = df_e["LogMonthlyIncome"] / (df_e["NumberOfOpenCreditLinesAndLoans"] + 1)
+
+    df_e["DebtToIncome"] = df_e["LogDebtRatio"] * df_e["LogMonthlyIncome"]
+
+    df_e["AgeRisk"] = np.where(df_e["age"] < 25, 1,
+                     np.where(df_e["age"] < 35, 0.8,
+                     np.where(df_e["age"] < 50, 0.6, 0.4)))
+
     utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
     df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=utilization_bins, labels=utilization_labels)
-
-    age_bins = [0, 25, 35, 45, 55, 65, np.inf]
-    age_labels = ["Young Adult", "Early Career", "Mid Career", "Established", "Pre-Retirement", "Retire"]
-    df_e["AgeBucket"] = pd.cut(df_e["age"], bins=age_bins, labels=age_labels)
 
     late_bins = [-1, 0, 1, 3, 6, np.inf]
     late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
     df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
 
-    df_e = df_e.drop(["RevolvingUtilizationOfUnsecuredLines"], axis=1, errors='ignore')
+    df_e = df_e.drop(
+        ["RevolvingUtilizationOfUnsecuredLines", 
+         "NumberOfTimes90DaysLate",
+         "NumberRealEstateLoansOrLines",
+         "DebtRatio",
+         "MonthlyIncome", 
+         "NumberOfOpenCreditLinesAndLoans",
+         "NumberOfTime30-59DaysPastDueNotWorse",
+         "NumberOfTime60-89DaysPastDueNotWorse",
+         "age",
+         "NumberOfDependents",
+         "LogMonthlyIncome",
+         "LogDebtRatio",
+        ], axis=1, errors='ignore')
+
+    print("Engineered features")
 
     return df_e
 
@@ -481,7 +513,7 @@ def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
     return f_beta
 
 
-# In[172]:
+# In[3]:
 
 
 # Load datasets
@@ -489,7 +521,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[173]:
+# In[4]:
 
 
 #summary
@@ -497,7 +529,7 @@ print(dataset_summary(df_train))
 df_train.head(5)
 
 
-# In[174]:
+# In[5]:
 
 
 # Outlier Handling
@@ -516,7 +548,7 @@ df_filtered = outlier_handling(
 df_filtered.describe()
 
 
-# In[175]:
+# In[6]:
 
 
 # Select targets
@@ -524,14 +556,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[176]:
+# In[7]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[177]:
+# In[8]:
 
 
 # Split train/test
@@ -545,35 +577,35 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[178]:
+# In[9]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[179]:
+# In[10]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.25)
 
 
-# In[180]:
+# In[11]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[181]:
+# In[12]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[182]:
+# In[13]:
 
 
 #log transform skewed
@@ -581,14 +613,14 @@ df_log = log_transform_skewed(df_collapsed)
 df_log.describe()
 
 
-# In[184]:
+# In[14]:
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_log, y_train, n_to_keep=9, bias_mode=None)  
+df_selected, fs_cols_to_drop = select_features(df_log, y_train, n_to_keep=20, bias_mode=None)
 
 
-# In[185]:
+# In[15]:
 
 
 # Columns
@@ -598,7 +630,7 @@ print(num_col_order)
 print(cat_col_order)
 
 
-# In[186]:
+# In[16]:
 
 
 # Impute and scale
@@ -610,14 +642,14 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler, skewed_col_or
 )
 
 
-# In[187]:
+# In[17]:
 
 
 # Skewed columns
 print(skewed_col_order)
 
 
-# In[188]:
+# In[18]:
 
 
 # Process
@@ -654,21 +686,21 @@ X_test = transform_val_test(
 X_train = df_processed.copy()
 
 
-# In[189]:
+# In[19]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[190]:
+# In[20]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[191]:
+# In[21]:
 
 
 # Encode
@@ -690,7 +722,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[192]:
+# In[22]:
 
 
 # Drop imputation flags for NN 
@@ -705,7 +737,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[193]:
+# In[23]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -720,7 +752,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[194]:
+# In[24]:
 
 
 # Convert to tensors
@@ -746,7 +778,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[195]:
+# In[25]:
 
 
 # Datasets
@@ -773,7 +805,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[196]:
+# In[26]:
 
 
 # Model
@@ -848,7 +880,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[197]:
+# In[27]:
 
 
 # Loss
@@ -872,10 +904,10 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=2)
+loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[198]:
+# In[28]:
 
 
 # Train
@@ -964,7 +996,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[199]:
+# In[29]:
 
 
 # Evaluation
@@ -1020,7 +1052,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[200]:
+# In[30]:
 
 
 # Cast to float32 
@@ -1029,7 +1061,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[201]:
+# In[31]:
 
 
 # Model
@@ -1059,14 +1091,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[202]:
+# In[32]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[203]:
+# In[33]:
 
 
 # Evaluation
@@ -1103,7 +1135,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[204]:
+# In[34]:
 
 
 # Importance
@@ -1112,21 +1144,21 @@ plt.title("Top Feature Importances (Gain)")
 plt.show()
 
 
-# In[205]:
+# In[35]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[206]:
+# In[36]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[208]:
+# In[37]:
 
 
 # Save for hosting
