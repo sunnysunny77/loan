@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[597]:
+# In[162]:
 
 
 # Imports
@@ -24,7 +24,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.feature_selection import RFE
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,7 +34,7 @@ lr = 1e-3
 weight_decay = 1e-4
 batch_size = 32
 num_epochs = 75
-num_runs = 2
+num_runs = 1
 max_patience = 13
 
 # pd 
@@ -43,7 +42,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[598]:
+# In[171]:
 
 
 def load_datasets(base_path="./"):
@@ -121,42 +120,46 @@ def drop_target_and_ids(df):
     return df_raw_features, target, feature_cols_to_drop
 
 def engineer_features(df):
-    df_engi = df.copy()
 
-    df_engi["TotalPastDue"] = (
-        df_engi["NumberOfTime30-59DaysPastDueNotWorse"] +
-        df_engi["NumberOfTimes90DaysLate"] +
-        df_engi["NumberOfTime60-89DaysPastDueNotWorse"]
+    df_e = df.copy()
+
+    TotalPastDue = (
+        df_e["NumberOfTime30-59DaysPastDueNotWorse"] +
+        df_e["NumberOfTimes90DaysLate"] +
+        df_e["NumberOfTime60-89DaysPastDueNotWorse"]
     )
 
-    df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
+    RevolvingUtilizationOfUnsecuredLines = df_e["RevolvingUtilizationOfUnsecuredLines"]
 
-    df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
+    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
 
-    df_engi["MajorDelinquencyBinary"] = (
-        (df_engi["NumberOfTimes90DaysLate"] > 0) |
-        (df_engi["NumberOfTime60-89DaysPastDueNotWorse"] > 0)
-    ).astype(int)
+    df_e["HighUtilizationFlag"] = (RevolvingUtilizationOfUnsecuredLines > 0.8).astype(int)
 
-    df_engi["LatePaymentsPerAge"] = df_engi["TotalPastDue"] / (df_engi["age"] + 1)
+    df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
 
-    df_engi["LatePaymentsPerCreditLine"] = df_engi["TotalPastDue"] / (df_engi["NumberOfOpenCreditLinesAndLoans"] + 1)
+    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
 
-    df_engi["NormalizedUtilization"] = np.sqrt(df_engi["RevolvingUtilizationOfUnsecuredLines"])
+    df_e["90DaysLate_Squared"] = df_e["NumberOfTimes90DaysLate"] ** 2
 
-    df_engi["HighUtilizationFlag"] = (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.5).astype(int)
+    df_e["LatePaymentsPerAge"] = TotalPastDue / (df_e["age"].replace(0, np.nan))
 
-    df_engi["DelinquencyInteraction"] = df_engi["TotalPastDue"] * df_engi["RevolvingUtilizationOfUnsecuredLines"]
+    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / (df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan))
 
     utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    df_engi["UtilizationBucket"] = pd.cut(df_engi["RevolvingUtilizationOfUnsecuredLines"], bins=utilization_bins, labels=utilization_labels)
+    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=utilization_bins, labels=utilization_labels)
+
+    age_bins = [0, 25, 35, 45, 55, 65, np.inf]
+    age_labels = ["Young Adult", "Early Career", "Mid Career", "Established", "Pre-Retirement", "Retire"]
+    df_e["AgeBucket"] = pd.cut(df_e["age"], bins=age_bins, labels=age_labels)
 
     late_bins = [-1, 0, 1, 3, 6, np.inf]
     late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    df_engi["LatePaymentBucket"] = pd.cut(df_engi["TotalPastDue"], bins=late_bins, labels=late_labels)
+    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
 
-    return df_engi
+    df_e = df_e.drop(["RevolvingUtilizationOfUnsecuredLines"], axis=1, errors='ignore')
+
+    return df_e
 
 def drop_high_missing_cols(df, threshold=0.3):
 
@@ -238,44 +241,6 @@ def collapse_rare_categories(df, threshold=0.005):
 
     return df_copy, rare_maps
 
-def drop_low_correlated_to_target(df, y, threshold=0.34, bias_mode=None):
-
-    df_temp = df.copy()
-
-    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
-    for col in cat_cols:
-        df_temp[col] = df_temp[col].astype('category').cat.codes
-
-    df_temp['target'] = y
-    corr_with_target = df_temp.corr()['target'].drop('target')
-
-    if bias_mode is None:
-        dropped_cols = corr_with_target[abs(corr_with_target) < threshold].index.tolist()
-    elif bias_mode is True:
-        dropped_cols = corr_with_target[(corr_with_target > 0) & (corr_with_target < threshold)].index.tolist()
-    else: 
-        dropped_cols = corr_with_target[(corr_with_target < 0) & (corr_with_target > -threshold)].index.tolist()
-
-    plt.figure(figsize=(10, 6))
-    corr_with_target.sort_values(ascending=False).plot(kind='bar', color='skyblue')
-    plt.axhline(y=threshold, color='red', linestyle='--', label=f'+{threshold}')
-    plt.axhline(y=-threshold, color='red', linestyle='--', label=f'-{threshold}')
-    plt.title("Feature Correlation with Target")
-    plt.ylabel("Correlation")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    if dropped_cols:
-        df_corr = df.drop(columns=dropped_cols)
-        print(f"Dropped: {len(dropped_cols)} low correlated to target cols")
-        print(f"Dropped cols: {dropped_cols}")
-    else:
-        df_corr = df.copy()
-        print("No low correlated to target cols dropped")
-
-    return df_corr, dropped_cols
-
 def log_transform_skewed(df, skew_threshold=1.0):
 
     df_copy = df.copy()
@@ -294,15 +259,15 @@ def log_transform_skewed(df, skew_threshold=1.0):
 
     return df_copy
 
-def plot_feature_importance(df, target, random_state=42, bias_mode=None):
+def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
 
     df_temp = df.copy()
 
-    feature_cols = df_temp.columns.tolist()
-
-    cat_cols = df_temp[feature_cols].select_dtypes(include=['object', 'category']).columns.tolist()
+    cat_cols = df_temp.select_dtypes(include=["object", "category"]).columns.tolist()
     for col in cat_cols:
-        df_temp[col] = df_temp[col].astype('category').cat.codes
+        df_temp[col] = df_temp[col].astype("category").cat.codes
+
+    feature_cols = df_temp.columns.tolist()
 
     X_train, X_val, y_train, y_val = train_test_split(
         df_temp[feature_cols], target, test_size=0.2, random_state=random_state, stratify=target
@@ -323,7 +288,7 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
 
     model = xgb.XGBClassifier(
         objective="binary:logistic",
-        eval_metric=["auc"],
+        eval_metric="auc",
         scale_pos_weight=scale_pos_weight,
         learning_rate=0.03,
         max_depth=6,
@@ -334,83 +299,39 @@ def plot_feature_importance(df, target, random_state=42, bias_mode=None):
         reg_alpha=0.05,
         reg_lambda=0.8,
         n_estimators=1500,
-        random_state=42,
+        random_state=random_state,
         n_jobs=-1,
         verbosity=0,
-        early_stopping_rounds=100,
-        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.03 * (0.99 ** epoch))]
     )
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
-    importance_dict = model.get_booster().get_score(importance_type='gain')
-    all_importances = pd.Series({col: importance_dict.get(col, 0.0) for col in feature_cols})
-    all_importances = all_importances.sort_values(ascending=False)
+    importance_dict = model.get_booster().get_score(importance_type="gain")
+    importance_df = (
+        pd.DataFrame({
+            "Feature": list(importance_dict.keys()),
+            "Importance": list(importance_dict.values())
+        })
+        .sort_values("Importance", ascending=False)
+        .reset_index(drop=True)
+    )
 
-    plt.figure(figsize=(10, 6))
-    plt.barh(all_importances.index[::-1], all_importances.values[::-1], color='skyblue')
-    plt.xlabel("Feature Importance (gain)")
-    plt.title("XGBoost Feature Importances")
-    plt.tight_layout()
+    xgb.plot_importance(model, importance_type="gain", max_num_features=X_train.shape[1])
+    plt.title("Top Feature Importances (Gain)")
     plt.show()
 
-def select_features(df, target, n_features_to_select=20, random_state=42, bias_mode=None):
+    top_features = importance_df["Feature"].head(n_to_keep).tolist()
+    final_features = list(set(top_features + cat_cols))
+    to_drop = [col for col in feature_cols if col not in final_features]
 
-    df_temp = df.copy()
+    df_selected = df[final_features].copy()
 
-    cat_cols = df_temp.select_dtypes(include=['object', 'category']).columns.tolist()
-    for col in cat_cols:
-        df_temp[col] = df_temp[col].astype('category').cat.codes
+    print(importance_df)
+    print(f"Kept: {len(final_features)} features (including categorical)")
+    print(f"Dropped: {len(to_drop)} features")
+    print(f"Dropped cols: {to_drop}\n")
 
-    X_train_full, _, y_train, _ = train_test_split(
-        df_temp, target, test_size=0.2, random_state=random_state, stratify=target
-    )
-
-    X_train = X_train_full.drop(columns=cat_cols).astype(np.float32)
-
-    neg_count = sum(y_train == 0)
-    pos_count = sum(y_train == 1)
-
-    if bias_mode is True:
-        scale_pos_weight = pos_count / neg_count
-    elif bias_mode is False:
-        scale_pos_weight = neg_count / pos_count
-    else:
-        scale_pos_weight = 1
-
-    base_model = xgb.XGBClassifier(
-        objective="binary:logistic",
-        eval_metric=["auc"],
-        scale_pos_weight=scale_pos_weight,
-        learning_rate=0.03,
-        max_depth=6,
-        min_child_weight=3,
-        subsample=0.8,
-        colsample_bytree=0.7,
-        gamma=0.5,
-        reg_alpha=0.05,
-        reg_lambda=0.8,
-        n_estimators=1500,
-        random_state=42,
-        n_jobs=-1,
-        verbosity=0,
-        callbacks=[xgb.callback.LearningRateScheduler(lambda epoch: 0.03 * (0.99 ** epoch))]
-    )
-
-    selector = RFE(estimator=base_model, n_features_to_select=n_features_to_select, step=1)
-    selector.fit(X_train, y_train)
-
-    selected_num_features = X_train.columns[selector.support_].tolist()
-    rfe_num_cols_to_drop = [col for col in X_train.columns if col not in selected_num_features]
-
-    df_selected = df[
-        selected_num_features + [col for col in cat_cols if col in df.columns]
-    ].copy()
-
-    print(f"Dropped: {len(rfe_num_cols_to_drop)} numerical features via RFE")
-    print(f"Dropped cols: {rfe_num_cols_to_drop}")
-
-    return df_selected, rfe_num_cols_to_drop
+    return df_selected, to_drop
 
 def impute_and_scale(df, threshold=1.0, num_col_order=None, cat_col_order=None):
 
@@ -560,7 +481,7 @@ def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
     return f_beta
 
 
-# In[599]:
+# In[172]:
 
 
 # Load datasets
@@ -568,7 +489,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[600]:
+# In[173]:
 
 
 #summary
@@ -576,17 +497,10 @@ print(dataset_summary(df_train))
 df_train.head(5)
 
 
-# In[601]:
+# In[174]:
 
 
 # Outlier Handling
-numeric_df = df_train.select_dtypes(include=['number'])
-plt.figure(figsize=(15, 6))
-sns.boxplot(data=numeric_df)
-plt.title("Boxplot for All Numeric Features")
-plt.xticks(rotation=45)
-plt.show()
-
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
 
 df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True) 
@@ -599,18 +513,10 @@ df_filtered = outlier_handling(
     threshold_high=99.97,
     threshold_low=0.03
 )
-
-numeric_df = df_filtered.select_dtypes(include=['number'])
-plt.figure(figsize=(15, 6))
-sns.boxplot(data=numeric_df)
-plt.title("Boxplot for All Numeric Features After Outlier Filtering")
-plt.xticks(rotation=45)
-plt.show()
-
 df_filtered.describe()
 
 
-# In[602]:
+# In[175]:
 
 
 # Select targets
@@ -618,14 +524,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[603]:
+# In[176]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[604]:
+# In[177]:
 
 
 # Split train/test
@@ -639,64 +545,50 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[605]:
+# In[178]:
 
 
 # Engineer_features
 df_engi = engineer_features(X_train)
 
 
-# In[606]:
+# In[179]:
 
 
 # Drop columns with missing
-df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.17)
+df_drop, hm_cols_to_drop = drop_high_missing_cols(df_engi, threshold=0.25)
 
 
-# In[607]:
+# In[180]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[608]:
+# In[181]:
 
 
 # Collapse rare categories
-df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.067)
+df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[609]:
-
-
-# Drop low correlated features to target
-df_corr, low_corr_cols_to_drop = drop_low_correlated_to_target(df_collapsed, y_train, threshold=0.0034, bias_mode=False)
-
-
-# In[610]:
+# In[182]:
 
 
 #log transform skewed
-df_log = log_transform_skewed(df_corr)
+df_log = log_transform_skewed(df_collapsed)
 df_log.describe()
 
 
-# In[612]:
+# In[184]:
 
 
-# Plot features
-plot_feature_importance(df_log, y_train, bias_mode=False)
+# Feature selection
+df_selected, fs_cols_to_drop = select_features(df_log, y_train, n_to_keep=9, bias_mode=None)  
 
 
-# In[613]:
-
-
-# RFE numeric Feature selection
-df_selected, rfe_cols_to_drop = select_features(df_corr, y_train, n_features_to_select=16, bias_mode=False) 
-
-
-# In[614]:
+# In[185]:
 
 
 # Columns
@@ -706,7 +598,7 @@ print(num_col_order)
 print(cat_col_order)
 
 
-# In[615]:
+# In[186]:
 
 
 # Impute and scale
@@ -718,18 +610,18 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler, skewed_col_or
 )
 
 
-# In[616]:
+# In[187]:
 
 
 # Skewed columns
 print(skewed_col_order)
 
 
-# In[617]:
+# In[188]:
 
 
 # Process
-all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop + low_corr_cols_to_drop + rfe_cols_to_drop
+all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop + fs_cols_to_drop
 
 X_val = engineer_features(X_val)
 X_val = transform_val_test(
@@ -762,21 +654,21 @@ X_test = transform_val_test(
 X_train = df_processed.copy()
 
 
-# In[618]:
+# In[189]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[619]:
+# In[190]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[620]:
+# In[191]:
 
 
 # Encode
@@ -798,7 +690,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[621]:
+# In[192]:
 
 
 # Drop imputation flags for NN 
@@ -813,7 +705,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[622]:
+# In[193]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -828,7 +720,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[623]:
+# In[194]:
 
 
 # Convert to tensors
@@ -854,7 +746,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[624]:
+# In[195]:
 
 
 # Datasets
@@ -881,7 +773,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[625]:
+# In[196]:
 
 
 # Model
@@ -956,7 +848,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[626]:
+# In[197]:
 
 
 # Loss
@@ -980,10 +872,10 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=3)
+loss_fn = FocalLoss(alpha=alpha, gamma=2)
 
 
-# In[627]:
+# In[198]:
 
 
 # Train
@@ -1072,7 +964,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[628]:
+# In[199]:
 
 
 # Evaluation
@@ -1128,7 +1020,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[629]:
+# In[200]:
 
 
 # Cast to float32 
@@ -1137,7 +1029,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[630]:
+# In[201]:
 
 
 # Model
@@ -1167,14 +1059,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[631]:
+# In[202]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[632]:
+# In[203]:
 
 
 # Evaluation
@@ -1211,7 +1103,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[633]:
+# In[204]:
 
 
 # Importance
@@ -1220,21 +1112,21 @@ plt.title("Top Feature Importances (Gain)")
 plt.show()
 
 
-# In[634]:
+# In[205]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[635]:
+# In[206]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[636]:
+# In[208]:
 
 
 # Save for hosting
@@ -1265,4 +1157,10 @@ joblib.dump(cat_maps, "cat_maps.pkl")
 joblib.dump(cat_col_order, "cat_col_order.pkl")
 joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
+
+
+# In[ ]:
+
+
+
 

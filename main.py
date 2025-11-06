@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
 import torch
 import torch.nn as nn
 import joblib
@@ -17,46 +11,43 @@ from typing import Dict, Union
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
-    df_engi = df.copy()
+    df_e = df.copy()
 
-    df_engi["TotalPastDue"] = (
-        df_engi["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0)
-        + df_engi["NumberOfTimes90DaysLate"].fillna(0)
-        + df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
+    TotalPastDue = (
+        df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0)
+        + df_e["NumberOfTimes90DaysLate"].fillna(0)
+        + df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
     )
 
-    df_engi["HasDelinquencyBinary"] = (df_engi["TotalPastDue"] > 0).astype(int)
+    RevolvingUtilizationOfUnsecuredLines = df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0)
 
-    df_engi["HasMultipleLate"] = (df_engi["TotalPastDue"] >= 2).astype(int)
+    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
 
-    df_engi["MajorDelinquencyBinary"] = (
-        (df_engi["NumberOfTimes90DaysLate"].fillna(0) > 0)
-        | (df_engi["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)
-    ).astype(int)
+    df_e["HighUtilizationFlag"] = (RevolvingUtilizationOfUnsecuredLines > 0.8).astype(int)
 
-    df_engi["LatePaymentsPerAge"] = (
-        df_engi["TotalPastDue"] / (df_engi["age"].fillna(np.nan) + 1)
-    )
+    df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
 
-    df_engi["LatePaymentsPerCreditLine"] = (
-        df_engi["TotalPastDue"] / (df_engi["NumberOfOpenCreditLinesAndLoans"].fillna(np.nan) + 1)
-    )
+    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
 
-    df_engi["NormalizedUtilization"] = np.sqrt(df_engi["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
+    df_e["90DaysLate_Squared"] = df_e["NumberOfTimes90DaysLate"].fillna(0) ** 2
 
-    df_engi["HighUtilizationFlag"] = (df_engi["RevolvingUtilizationOfUnsecuredLines"] > 0.67).astype(int)
+    df_e["LatePaymentsPerAge"] = TotalPastDue / (df_e["age"].replace(0, np.nan))
 
-    df_engi["DelinquencyInteraction"] = df_engi["TotalPastDue"] * df_engi["RevolvingUtilizationOfUnsecuredLines"].fillna(0)
+    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / (df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan))
 
-    util_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
-    util_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    df_engi["UtilizationBucket"] = pd.cut(df_engi["RevolvingUtilizationOfUnsecuredLines"].fillna(0), bins=util_bins, labels=util_labels)
+    utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
+    utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
+    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines , bins=utilization_bins, labels=utilization_labels)
+
+    age_bins = [0, 25, 35, 45, 55, 65, np.inf]
+    age_labels = ["Young Adult", "Early Career", "Mid Career", "Established", "Pre-Retirement", "Retire"]
+    df_e["AgeBucket"] = pd.cut(df_e["age"].fillna(-1), bins=age_bins, labels=age_labels)
 
     late_bins = [-1, 0, 1, 3, 6, np.inf]
     late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    df_engi["LatePaymentBucket"] = pd.cut(df_engi["TotalPastDue"], bins=late_bins, labels=late_labels)
+    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
 
-    return df_engi
+    return df_e
 
 class NN(nn.Module):
     def __init__(self, num_numeric, cat_dims, emb_dims):
@@ -219,19 +210,3 @@ def predict_xgb_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
     probs, preds = predict_xgb(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
-
-
-# In[ ]:
-
-
-# uvicorn main:app --host 127.0.0.1 --port 8001
-# pip install -r requirements.txt
-# python3 -m http.server
-# pm2 start venv/bin/python --name "fastapi-app" -- -m uvicorn main:app --host 127.0.0.1 --port 8001
-
-
-# In[ ]:
-
-
-
-
