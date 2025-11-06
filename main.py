@@ -10,51 +10,56 @@ from pydantic import BaseModel
 from typing import Dict, Union
 
 def engineer_features(df):
+    
     df_e = df.copy()
 
-    # Fill all missing values with 0 for safety
-    df_e = df_e.fillna(0)
-
-    # Ensure all expected columns exist
-    expected_cols = [
-        "NumberOfTime30-59DaysPastDueNotWorse", "NumberOfTimes90DaysLate", "NumberOfTime60-89DaysPastDueNotWorse",
-        "RevolvingUtilizationOfUnsecuredLines", "DebtRatio", "MonthlyIncome", "NumberOfOpenCreditLinesAndLoans",
-        "age", "NumberOfDependents"
-    ]
-    for col in expected_cols:
-        if col not in df_e.columns:
-            df_e[col] = 0
-
     TotalPastDue = (
-        df_e["NumberOfTime30-59DaysPastDueNotWorse"]
-        + df_e["NumberOfTimes90DaysLate"]
-        + df_e["NumberOfTime60-89DaysPastDueNotWorse"]
+        df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0)
+        + df_e["NumberOfTimes90DaysLate"].fillna(0)
+        + df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
     )
-
-    RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"])
+    
+    RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
 
     df_e["MajorDelinquencyBinary"] = (
-        (df_e["NumberOfTimes90DaysLate"] > 0) |
-        (df_e["NumberOfTime60-89DaysPastDueNotWorse"] > 0)
+        (df_e["NumberOfTimes90DaysLate"].fillna(0) > 0) |
+        (df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)
     ).astype(int)
-
+    
     df_e["HasDelinquencies"] = (TotalPastDue > 0).astype(int)
+
     df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
+    
     df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
-    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (df_e["age"].replace(0, np.nan))
-    df_e["LatePaymentsPerAge"] = TotalPastDue / (df_e["age"].replace(0, np.nan))
-    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / (df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan))
+    
+    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
+    
+    age_denominator = df_e["age"].replace(0, np.nan)
+    
+    credit_line_denominator = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
+    
+    MonthlyIncome_safe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
+    
+    DebtRatio_safe = np.log1p(df_e["DebtRatio"].fillna(0))
+
+    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / age_denominator
+    
+    df_e["LatePaymentsPerAge"] = TotalPastDue / age_denominator
+    
+    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / credit_line_denominator
+    
     df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
-    df_e["90DaysLate_Squared"] = df_e["NumberOfTimes90DaysLate"] ** 2
-    df_e["LogDebtRatio"] = np.log1p(df_e["DebtRatio"])
-    df_e["LogMonthlyIncome"] = np.log1p(df_e["MonthlyIncome"])
-    df_e["IncomePerCreditLine"] = df_e["LogMonthlyIncome"] / (df_e["NumberOfOpenCreditLinesAndLoans"] + 1)
-    df_e["DebtToIncome"] = df_e["LogDebtRatio"] * df_e["LogMonthlyIncome"]
 
-    df_e["AgeRisk"] = np.where(df_e["age"] < 25, 1,
-                       np.where(df_e["age"] < 35, 0.8,
-                       np.where(df_e["age"] < 50, 0.6, 0.4)))
+    df_e['90DaysLate_Squared'] = df_e['NumberOfTimes90DaysLate'].fillna(0) ** 2
+    
+    df_e["IncomePerCreditLine"] = MonthlyIncome_safe / (df_e["NumberOfOpenCreditLinesAndLoans"].fillna(0) + 1)
+    
+    df_e["DebtToIncome"] = DebtRatio_safe * MonthlyIncome_safe
 
+    df_e["AgeRisk"] = np.where(df_e["age"].fillna(0) < 25, 1,
+                     np.where(df_e["age"].fillna(0) < 35, 0.8,
+                     np.where(df_e["age"].fillna(0) < 50, 0.6, 0.4)))
+    
     utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
     df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=utilization_bins, labels=utilization_labels)
@@ -63,12 +68,20 @@ def engineer_features(df):
     late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
     df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
 
-    df_e = df_e.drop([
-        "RevolvingUtilizationOfUnsecuredLines", "NumberOfTimes90DaysLate", "NumberRealEstateLoansOrLines",
-        "DebtRatio", "MonthlyIncome", "NumberOfOpenCreditLinesAndLoans",
-        "NumberOfTime30-59DaysPastDueNotWorse", "NumberOfTime60-89DaysPastDueNotWorse",
-        "age", "NumberOfDependents", "LogMonthlyIncome", "LogDebtRatio"
-    ], axis=1, errors='ignore')
+    df_e = df_e.drop(
+        ["RevolvingUtilizationOfUnsecuredLines", 
+         "NumberOfTimes90DaysLate",
+         "NumberRealEstateLoansOrLines",
+         "DebtRatio",
+         "MonthlyIncome", 
+         "NumberOfOpenCreditLinesAndLoans",
+         "NumberOfTime30-59DaysPastDueNotWorse",
+         "NumberOfTime60-89DaysPastDueNotWorse",
+         "age",
+         "NumberOfDependents",
+         "LogMonthlyIncome",
+         "LogDebtRatio",
+        ], axis=1, errors='ignore')
 
     return df_e
 
@@ -220,7 +233,6 @@ def predict_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
     probs, preds = predict_nn(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
-
 
 def predict_xgb(df: pd.DataFrame, threshold=threshold_b):
     df = preprocess(df, add_was_imputed=True)
