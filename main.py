@@ -187,25 +187,12 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
 
-    df_cat = df_engi[cat_col_order].copy().astype('category')  
-    for col, rare_cats in rare_maps.items():
-        if col in df_cat.columns:
-            df_cat[col] = df_cat[col].cat.add_categories('Other')
-            df_cat[col] = df_cat[col].where(~df_cat[col].isin(rare_cats), 'Other')
-
-    for col in df_cat.columns:
-        df_cat[col] = df_cat[col].cat.add_categories('Unknown')
-        df_cat[col] = df_cat[col].fillna('Unknown')
-
+    df_cat = df_engi[cat_col_order].copy().astype('category')
     for col in cat_col_order:
-        df_cat[col] = df_cat[col].map(cat_maps[col])
-        unknown_code = cat_maps[col].get('Unknown', None)
-        other_code = cat_maps[col].get('Other', 0)
-        if unknown_code is not None:
-            df_cat[col] = df_cat[col].fillna(unknown_code)
-        else:
-            df_cat[col] = df_cat[col].fillna(other_code)
-        df_cat[col] = df_cat[col].astype(int)
+        if col in rare_maps:
+            df_cat[col] = df_cat[col].apply(lambda x: 'Other' if x in rare_maps[col] else x)
+        df_cat[col] = df_cat[col].fillna('Unknown')
+        df_cat[col] = df_cat[col].map(cat_maps[col]).fillna(cat_maps[col].get('Unknown', -1))
 
     if add_was_imputed:
         df_final = pd.concat([df_num_scaled, df_cat], axis=1)
