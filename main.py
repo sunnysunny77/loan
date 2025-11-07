@@ -21,6 +21,8 @@ def engineer_features(df):
     
     RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
 
+    df_e["TotalPastDuesSafe"] = TotalPastDue
+
     df_e["MajorDelinquencyBinary"] = (
         (df_e["NumberOfTimes90DaysLate"].fillna(0) > 0) |
         (df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0) > 0)

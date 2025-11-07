@@ -7541,6 +7541,8 @@ a.anchor-link {
     
     <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
 
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"TotalPastDuesSafe"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDue</span>
+
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"MajorDelinquencyBinary"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
         <span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfTimes90DaysLate"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">|</span>
         <span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfTime60-89DaysPastDueNotWorse"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>

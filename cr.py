@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[64]:
 
 
 # Imports
@@ -42,7 +42,7 @@ pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
 
 
-# In[2]:
+# In[65]:
 
 
 def load_datasets(base_path="./"):
@@ -130,6 +130,8 @@ def engineer_features(df):
     )
 
     RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
+
+    df_e["TotalPastDuesSafe"] = TotalPastDue
 
     df_e["MajorDelinquencyBinary"] = (
         (df_e["NumberOfTimes90DaysLate"].fillna(0) > 0) |
@@ -249,10 +251,10 @@ def collapse_rare_categories(df, threshold=0.005):
     df_copy = df.copy()
 
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
-
     rare_maps = {}
 
     for col in cat_cols:
+
         freqs = df_copy[col].value_counts(normalize=True, dropna=True)
         rare_cats = [c for c in freqs[freqs < threshold].index]
         if rare_cats:
@@ -263,8 +265,12 @@ def collapse_rare_categories(df, threshold=0.005):
             print(f"Column '{col}': no rare categories to collapse")
 
         if df_copy[col].isna().any():
-            df_copy[col] = df_copy[col].cat.add_categories('Unknown')
+            df_copy[col] = df_copy[col].astype('category')
+            if 'Unknown' not in df_copy[col].cat.categories:
+                df_copy[col] = df_copy[col].cat.add_categories('Unknown')
+            num_unknowns = df_copy[col].isna().sum()
             df_copy[col] = df_copy[col].fillna('Unknown')
+            print(f"Column '{col}': filled {num_unknowns} missing values as 'Unknown'")
 
     return df_copy, rare_maps
 
@@ -359,9 +365,11 @@ def impute_and_scale(df):
         df_copy[num_col_order] = df_copy[num_col_order].replace([np.inf, -np.inf], np.nan)
         for col in num_col_order:
             df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
-        df_copy[num_col_order] = num_imputer.fit_transform(df_copy[num_col_order])
 
-        skewness = pd.DataFrame(df_copy[num_col_order]).skew().sort_values(ascending=False)
+        num_imputer = SimpleImputer(strategy='median')
+        df_copy[num_col_order] = num_imputer.fit_transform(df_copy[num_col_order])  
+
+        skewness = df_copy[num_col_order].skew().sort_values(ascending=False)
         skewed_cols = skewness[abs(skewness) > 1.0].index.tolist()
         normal_cols = [c for c in num_col_order if c not in skewed_cols]
 
@@ -410,10 +418,13 @@ def transform_val_test(
             df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
         df_copy[num_col_order] = num_imputer.transform(df_copy[num_col_order])
 
+        skewed_cols = skewed_cols or []
+        normal_cols = [c for c in num_col_order if c not in skewed_cols]
+
         if skewed_cols and robust_scaler:
             df_copy[skewed_cols] = robust_scaler.transform(df_copy[skewed_cols])
-        if std_scaler:
-            normal_cols = [c for c in num_col_order if not skewed_cols or c not in skewed_cols]
+
+        if normal_cols and std_scaler:
             df_copy[normal_cols] = std_scaler.transform(df_copy[normal_cols])
 
     if cat_col_order:
@@ -479,7 +490,7 @@ def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
     return f_beta
 
 
-# In[3]:
+# In[66]:
 
 
 # Load datasets
@@ -487,7 +498,7 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[67]:
 
 
 #summary
@@ -495,14 +506,14 @@ print(dataset_summary(df_train))
 df_train.head(5)
 
 
-# In[5]:
+# In[68]:
 
 
 # Drop duplicates
 df_train = check_and_drop_duplicates(df_train)
 
 
-# In[6]:
+# In[69]:
 
 
 # Outlier Handling
@@ -536,7 +547,7 @@ plt.show()
 df_filtered.describe()
 
 
-# In[7]:
+# In[70]:
 
 
 # Select targets
@@ -544,14 +555,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[8]:
+# In[71]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[9]:
+# In[72]:
 
 
 # Split train/test
@@ -565,42 +576,42 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[10]:
+# In[73]:
 
 
 #Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[11]:
+# In[74]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[12]:
+# In[75]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[13]:
+# In[76]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[14]:
+# In[77]:
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=13, bias_mode=None)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14, bias_mode=None)
 
 
-# In[15]:
+# In[78]:
 
 
 # Impute and scale
@@ -609,7 +620,7 @@ df_processed, num_imputer,  cat_imputer, robust_scaler, std_scaler, num_col_orde
 )
 
 
-# In[16]:
+# In[79]:
 
 
 # Skewed columns
@@ -620,7 +631,7 @@ print(rare_maps)
 print(cat_maps)
 
 
-# In[17]:
+# In[80]:
 
 
 # Process
@@ -661,21 +672,21 @@ X_test = transform_val_test(
 X_train = df_processed.copy()
 
 
-# In[18]:
+# In[81]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[19]:
+# In[82]:
 
 
 #summary
 print(dataset_summary(X_train))
 
 
-# In[20]:
+# In[83]:
 
 
 # Encode
@@ -697,7 +708,7 @@ for col in cat_cols:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
 
 
-# In[21]:
+# In[84]:
 
 
 # Drop imputation flags for NN 
@@ -712,7 +723,7 @@ X_val_nn = drop_imputation_flags(X_val.copy())
 X_test_nn = drop_imputation_flags(X_test.copy())
 
 
-# In[22]:
+# In[85]:
 
 
 # Separate numeric and categorical form embeding and cast to float32 and int64 
@@ -727,7 +738,7 @@ X_val_cat = X_val_nn[cat_cols].astype('int64').values
 X_test_cat = X_test_nn[cat_cols].astype('int64').values
 
 
-# In[23]:
+# In[86]:
 
 
 # Convert to tensors
@@ -753,7 +764,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[24]:
+# In[87]:
 
 
 # Datasets
@@ -780,7 +791,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[25]:
+# In[88]:
 
 
 # Model
@@ -855,7 +866,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[26]:
+# In[89]:
 
 
 # Loss
@@ -882,7 +893,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[27]:
+# In[90]:
 
 
 # Train
@@ -971,7 +982,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[28]:
+# In[91]:
 
 
 # Evaluation
@@ -1027,7 +1038,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[29]:
+# In[92]:
 
 
 # Cast to float32 
@@ -1036,7 +1047,7 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[30]:
+# In[93]:
 
 
 # Model
@@ -1066,14 +1077,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[31]:
+# In[94]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[32]:
+# In[95]:
 
 
 # Evaluation
@@ -1110,7 +1121,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[33]:
+# In[96]:
 
 
 # Importance
@@ -1129,21 +1140,21 @@ plt.show()
 print(importance_df)
 
 
-# In[34]:
+# In[97]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[35]:
+# In[98]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[36]:
+# In[99]:
 
 
 # Save for hosting
@@ -1158,6 +1169,12 @@ joblib.dump(cat_maps, "cat_maps.pkl")
 joblib.dump(cat_col_order, "cat_col_order.pkl")
 joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:
