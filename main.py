@@ -34,8 +34,6 @@ def engineer_features(df):
     
     df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
     
-    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
-    
     age_denominator = df_e["age"].replace(0, np.nan)
     
     credit_line_denominator = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
@@ -133,7 +131,6 @@ class NN(nn.Module):
 model_b = xgb.XGBClassifier()
 model_b.load_model("cr_b.json")
 num_imputer = joblib.load("num_imputer.pkl")
-cat_imputer = joblib.load("cat_imputer.pkl")
 robust_scaler = joblib.load("robust_scaler.pkl")
 std_scaler = joblib.load("std_scaler.pkl")
 cat_maps = joblib.load("cat_maps.pkl")
@@ -179,8 +176,9 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
         for col in df_engi.columns:
             df_engi[f"Was{col}Imputed"] = df_engi[col].isna().astype(int)
 
+
     df_num_raw = df_engi[num_col_order].copy()
-    df_num_imputed = pd.DataFrame(num_imputer.transform(df_num_raw), columns=num_col_order)
+    df_num_imputed = pd.DataFrame(num_imputer.transform(df_num_raw), columns=num_col_order, index=df_engi.index)
 
     df_num_scaled = pd.DataFrame(index=df_engi.index)
     if skewed_col_order:
@@ -189,26 +187,30 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
 
-    df_cat = df_engi[cat_col_order].copy().astype('category')
+
+    df_cat = df_engi[cat_col_order].copy().astype('object')
     for col in cat_col_order:
-        if col in rare_maps:
-            df_cat[col] = df_cat[col].apply(lambda x: 'Other' if x in rare_maps[col] else x)
-        df_cat[col] = df_cat[col].fillna('Unknown')
-        df_cat[col] = df_cat[col].map(cat_maps[col]).fillna(cat_maps[col].get('Unknown', -1))
+        if rare_maps and col in rare_maps:
+            df_cat[col] = df_cat[col].astype('object').replace(list(rare_maps[col]), 'Other')
+        df_cat[col] = df_cat[col].astype('object').fillna('Unknown')
+        if 'Unknown' not in cat_maps[col]:
+            cat_maps[col]['Unknown'] = max(cat_maps[col].values()) + 1
+        df_cat[col] = df_cat[col].map(cat_maps[col]).fillna(cat_maps[col]['Unknown']).astype(int)
 
     if add_was_imputed:
-        df_final = pd.concat([df_num_scaled, df_cat], axis=1)
         was_imputed_cols = [c for c in df_engi.columns if c.startswith("Was")]
-        df_final = pd.concat([df_final, df_engi[was_imputed_cols]], axis=1)
+        df_final = pd.concat([df_num_scaled, df_cat, df_engi[was_imputed_cols]], axis=1)
         df_final = df_final.astype(np.float32)
-        trained_features = model_b.get_booster().feature_names
-        df_final = df_final.reindex(columns=trained_features, fill_value=0.0)
+        if model_b:
+            trained_features = model_b.get_booster().feature_names
+            df_final = df_final.reindex(columns=trained_features, fill_value=0.0)
         return df_final
+
     else:
         x_num_tensor = torch.tensor(df_num_scaled.values, dtype=torch.float32).to(device)
         x_cat_tensor = torch.tensor(df_cat.values, dtype=torch.int64).to(device)
         return x_num_tensor, x_cat_tensor
-
+    
 def predict_nn(df: pd.DataFrame, threshold=threshold_a):
     x_num, x_cat = preprocess(df, add_was_imputed=False)
     with torch.no_grad():
