@@ -131,6 +131,7 @@ class NN(nn.Module):
 model_b = xgb.XGBClassifier()
 model_b.load_model("cr_b.json")
 num_imputer = joblib.load("num_imputer.pkl")
+cat_imputer = joblib.load("cat_imputer.pkl")
 robust_scaler = joblib.load("robust_scaler.pkl")
 std_scaler = joblib.load("std_scaler.pkl")
 cat_maps = joblib.load("cat_maps.pkl")
@@ -187,15 +188,14 @@ def preprocess(df: pd.DataFrame, add_was_imputed: bool = False):
     if normal_col_order:
         df_num_scaled[normal_col_order] = std_scaler.transform(df_num_imputed[normal_col_order])
 
-
     df_cat = df_engi[cat_col_order].copy().astype('object')
     for col in cat_col_order:
         if rare_maps and col in rare_maps:
-            df_cat[col] = df_cat[col].astype('object').replace(list(rare_maps[col]), 'Other')
-        df_cat[col] = df_cat[col].astype('object').fillna('Unknown')
-        if 'Unknown' not in cat_maps[col]:
-            cat_maps[col]['Unknown'] = max(cat_maps[col].values()) + 1
-        df_cat[col] = df_cat[col].map(cat_maps[col]).fillna(cat_maps[col]['Unknown']).astype(int)
+            rare_categories = list(rare_maps[col])
+            df_cat[col] = df_cat[col].replace(rare_categories, 'Other')
+    df_cat[cat_col_order] = cat_imputer.transform(df_cat[cat_col_order])
+    for col in cat_col_order:
+        df_cat[col] = df_cat[col].astype(str).map(cat_maps[col]).astype(int)
 
     if add_was_imputed:
         was_imputed_cols = [c for c in df_engi.columns if c.startswith("Was")]
