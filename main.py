@@ -23,69 +23,92 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    df_e["MajorDelinquencyBinary"] = (
-        (NumberOfTimes90DaysLate > 0) |
-        (NumberOfTime6089DaysPastDueNotWorse > 0)
-    ).astype(int)
-    
-    df_e["TotalPastDue"] = TotalPastDue
-
     RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
 
-    HasDelinquencies = (TotalPastDue > 0).astype(int)
+    AgeSafe = df_e["age"].fillna(0)
     
-    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
-
-    df_e['90DaysLate_Squared'] = NumberOfTimes90DaysLate ** 2
+    MonthlyIncomeSafe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
     
-    df_e["HasDelinquencies"] = HasDelinquencies
-
-    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
-    
-    df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
-    
-    age_safe = df_e["age"].fillna(0)
-    
-    MonthlyIncome_safe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
-    
-    DebtRatio_safe = np.log1p(df_e["DebtRatio"].fillna(0))
+    DebtRatioSafe = np.log1p(df_e["DebtRatio"].fillna(0))
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
-    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (age_safe + 1)
+    DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
+
+    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
+
+    AgeRisk = np.where(AgeSafe < 25, 1,
+                     np.where(AgeSafe < 35, 0.8,
+                     np.where(AgeSafe < 50, 0.6, 0.4)))
+
+    DelinquencyScore = (
+        NumberOfTime3059DaysPastDueNotWorse +
+        NumberOfTime6089DaysPastDueNotWorse * 2 +
+        NumberOfTimes90DaysLate * 3
+    )
+
+    HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+
+    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
     
-    df_e["LatePaymentsPerAge"] = TotalPastDue / (age_safe + 1)
+    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
+
+    df_e["HasAnyDelinquency"] = HasAnyDelinquency
+    
+    df_e["HasMajorDelinquency"] = (
+        (NumberOfTime6089DaysPastDueNotWorse  > 0) |
+        (NumberOfTimes90DaysLate > 0)
+    ).astype(int)
+
+    df_e["SevereDelinquency"] = (
+        (NumberOfTimes90DaysLate > 0) & 
+        (NumberOfTime6089DaysPastDueNotWorse > 0)
+    ).astype(int)
+                                                 
+    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (AgeSafe + 1)
+
+    df_e["LatePaymentsPerAge"] = TotalPastDue / (AgeSafe + 1)
     
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
-    
-    IncomePerCreditLine = MonthlyIncome_safe / CreditLinesSafe
+
+    df_e["LongTermLateFraction"] = NumberOfTimes90DaysLate / (TotalPastDue+ 1)
+
+    df_e['90DaysLate_Squared'] = NumberOfTimes90DaysLate ** 2
+
+    df_e["IncomePerCreditLineHasDelinquencies"] = IncomePerCreditLine * HasAnyDelinquency
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     
-    df_e["DebtToIncome"] = DebtRatio_safe * MonthlyIncome_safe
+    df_e["DebtToIncome"] = DebtRatioSafe * MonthlyIncomeSafe
 
-    AgeRisk = np.where(df_e["age"].fillna(0) < 25, 1,
-                     np.where(df_e["age"].fillna(0) < 35, 0.8,
-                     np.where(df_e["age"].fillna(0) < 50, 0.6, 0.4)))
-
-    df_e["AgeRisk"] = AgeRisk
-
-    df_e["DebtToIncomeAgeRisk"] = df_e["DebtToIncome"] * AgeRisk     
-
-    df["IncomePerCreditLine_HasDelinquencies"] = IncomePerCreditLine * HasDelinquencies
+    df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
     
-    utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
-    utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=utilization_bins, labels=utilization_labels)
+    Age_bins = [0, 25, 50, 120] 
+    Age_labels = ["Young", "Mid", "Senior"]
+    AgeBucket = pd.cut(AgeSafe, bins=Age_bins, labels=Age_labels)
+       
+    DelinquencyScore_bins=[-1, 0, 1, 3, 6, np.inf]
+    DelinquencyScore_labels=["None", "Few", "Moderate", "Frequent", "Chronic"]
+    DelinquencyBucket = pd.cut(DelinquencyScore, bins=DelinquencyScore_bins, labels=DelinquencyScore_labels)
     
-    age_bins = [0, 25, 50, 120] 
-    age_labels = ["Young", "Mid", "Senior"]
-    df_e["AgeBucket"] = pd.cut(age_safe, bins=age_bins, labels=age_labels)
+    Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
+    Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
+    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
 
-    late_bins = [-1, 0, 1, 3, 6, np.inf]
-    late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
+    Late_bins = [-1, 0, 1, 3, 6, np.inf]
+    Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
+    LatePaymentBucket = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
 
+    df_e["AgeBucket"] = AgeBucket
+
+    df_e["DelinquencyBucket"] = DelinquencyBucket
+
+    df_e["UtilizationBucket"] = UtilizationBucket
+
+    df_e["LatePaymentBucket"] = LatePaymentBucket
+
+    df_e["UtilizationBucketLateBucket"] = UtilizationBucket.astype(str) + "_" + LatePaymentBucket.astype(str)
+    
     df_e = df_e.drop(
         ["RevolvingUtilizationOfUnsecuredLines", 
          "NumberOfTimes90DaysLate",
@@ -152,6 +175,7 @@ robust_scaler = joblib.load("robust_scaler.pkl")
 std_scaler = joblib.load("std_scaler.pkl")
 cat_maps = joblib.load("cat_maps.pkl")
 cat_col_order = joblib.load("cat_col_order.pkl")
+X_train_flags = joblib.load("X_train_flags.pkl")
 num_col_order = joblib.load("num_col_order.pkl")
 skewed_col_order = joblib.load("skewed_col_order.pkl")
 threshold_a = joblib.load("threshold_a.pkl")
@@ -162,7 +186,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cat_dims = [len(cat_maps[c]) for c in cat_col_order]
 emb_dims = [min(50, (len(cat_maps[c]) + 1) // 2) for c in cat_col_order]
 
-model = NN(num_numeric=len(num_col_order), cat_dims=cat_dims, emb_dims=emb_dims)
+model = NN(num_numeric=(len(num_col_order) + len(X_train_flags)), cat_dims=cat_dims, emb_dims=emb_dims)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 weights_path = "cr_weights.pth"
 loaded_weights = torch.load(weights_path, map_location=device) 
@@ -210,19 +234,20 @@ def preprocess(df: pd.DataFrame, for_xgb: bool = False):
                 rare_categories = list(rare_maps[col])
                 df_copy[col] = df_copy[col].replace(rare_categories, 'Other')
         df_copy[cat_col_order] = cat_imputer.transform(df_copy[cat_col_order])
-        
+
     if for_xgb:
         for col in cat_col_order:
             df_copy[col] = df_copy[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-        
-        df_final = df_copy.astype(np.float32)
+        imputation_flags = [f for f in X_train_flags if f in df_copy.columns]   
+        df_final = df_copy[num_col_order + imputation_flags + cat_col_order].astype(np.float32)    
         trained_features = model_b.get_booster().feature_names
         df_final = df_final.reindex(columns=trained_features, fill_value=0.0)
         return df_final
     else:
         for col in cat_col_order:
             df_copy[col] = df_copy[col].astype(str).map(cat_maps[col]).astype(int)
-        x_num_tensor = torch.tensor(df_copy[num_col_order].values, dtype=torch.float32).to(device)
+        imputation_flags = [f for f in X_train_flags if f in df_copy.columns]
+        x_num_tensor = torch.tensor(df_copy[num_col_order + imputation_flags].values, dtype=torch.float32).to(device)
         x_cat_tensor = torch.tensor(df_copy[cat_col_order].values, dtype=torch.int64).to(device)
         return x_num_tensor, x_cat_tensor
 

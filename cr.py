@@ -16,6 +16,7 @@ import seaborn as sns
 import xgboost as xgb
 import copy
 import joblib
+import shap
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
@@ -35,12 +36,14 @@ lr = 1e-3
 weight_decay = 1e-4
 batch_size = 32
 num_epochs = 75
-num_runs = 3
+num_runs = 5
 max_patience = 13
 
 # pd 
 pd.set_option("display.max_rows", None)
 pd.set_option("display.max_columns", None)
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.width', 0)
 
 
 # In[2]:
@@ -58,52 +61,60 @@ def load_datasets(base_path="./"):
 
     return dfs
 
-def dataset_summary(df, show_counts=True, show_corr=True):
+def dataset_summary(df, y=None, threshold=0.7):
 
-    total_rows = len(df)
-    total_duplicates = df.duplicated().sum()
+    df_copy = df.copy()
+
+    if y is not None and y.name in df_copy.columns:
+        df_copy = df_copy.drop(columns=[y.name])
+
+    cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
+
+    for col in cat_cols:
+        df_copy[col] = df_copy[col].astype("category").cat.codes
+
+    print(f"Dataset shape: {df_copy.shape}")
+    print(f"Total rows: {len(df_copy)}")
+    print(f"Total duplicate rows: {df_copy.duplicated().sum()}")
 
     summary = pd.DataFrame({
-        "dtype": df.dtypes,
-        "non_null_count": df.notna().sum(),
-        "missing_count": df.isna().sum(),
-        "missing_%": (df.isna().mean() * 100).round(2),
-        "unique_count": df.nunique(),
-        "duplicates_in_dataset": total_duplicates
+        "dtype": df_copy.dtypes,
+        "non_null": df_copy.notna().sum(),
+        "missing": df_copy.isna().sum(),
+        "missing_%": (df_copy.isna().mean() * 100).round(2),
+        "unique": df_copy.nunique()
     })
 
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    numeric_cols = df_copy.select_dtypes(include="number").columns
+    feature_cols = df_copy.columns.tolist()
+    desc = df_copy[numeric_cols].describe().T
+    desc["skew"] = df_copy[numeric_cols].skew()
+    summary = summary.join(desc[["mean", "std", "min", "25%", "50%", "75%", "max", "skew"]])
 
-    if numeric_cols:
-        desc = df[numeric_cols].describe(percentiles=[.01, .25, .5, .75, .99]).T
-        desc = desc.rename(columns={"50%": "median"})
-        desc["skew"] = df[numeric_cols].skew()
-        desc["kurtosis"] = df[numeric_cols].kurtosis()
-        summary = summary.merge(desc, left_index=True, right_index=True, how="left")
+    if y is not None:
+        df_copy['target'] = y
+        summary["corr_with_target"] =  df_copy.corr()['target'].drop('target')
 
-    print(f"Dataset shape: {df.shape}")
-    if show_counts:
-        print(f"Total rows: {total_rows}")
-        print(f"Total duplicate rows: {total_duplicates}")
+    corr_matrix = df_copy.corr(numeric_only=True)
+    corr_pairs = (
+        corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        .stack()
+        .sort_values(ascending=False)
+    )
 
-    summary = summary.sort_values(by="missing_%", ascending=False)
+    high_corr = corr_pairs[abs(corr_pairs) > threshold]
 
-    if show_corr and numeric_cols:
-        corr = df[numeric_cols].corr()
-        print("\n=== Numeric Feature Correlations ===")
-        threshold = 0.3
-        corr_pairs = (
-            corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-                .stack()
-                .sort_values(ascending=False)
-        )
-        strong_corr = corr_pairs[abs(corr_pairs) >= threshold]
-        if not strong_corr.empty:
-            print(strong_corr.to_string())
-        else:
-            print("No strong correlations found (>|0.3|).")
+    corr_map = {}
+    for (f1, f2), val in high_corr.items():
+        corr_map.setdefault(f1, []).append(f"{f2} ({val:.2f})")
+        corr_map.setdefault(f2, []).append(f"{f1} ({val:.2f})")
 
-    return summary
+    summary["high_corr_flag"] = summary.index.map(lambda col: col in corr_map)
+    summary["high_corr_with"] = summary.index.map(
+        lambda col: ", ".join(corr_map[col]) if col in corr_map else ""
+    )
+
+    return summary.sort_values("missing_%", ascending=False)
 
 def outlier_handling(df, target_col, threshold_high=99, threshold_low=1):
 
@@ -159,68 +170,91 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    df_e["MajorDelinquencyBinary"] = (
-        (NumberOfTimes90DaysLate > 0) |
-        (NumberOfTime6089DaysPastDueNotWorse > 0)
-    ).astype(int)
-
-    df_e["TotalPastDue"] = TotalPastDue
-
     RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
 
-    HasDelinquencies = (TotalPastDue > 0).astype(int)
+    AgeSafe = df_e["age"].fillna(0)
 
-    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
+    MonthlyIncomeSafe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
 
-    df_e['90DaysLate_Squared'] = NumberOfTimes90DaysLate ** 2
-
-    df_e["HasDelinquencies"] = HasDelinquencies
-
-    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
-
-    df_e["DelinquencyInteraction"] = TotalPastDue * RevolvingUtilizationOfUnsecuredLines
-
-    age_safe = df_e["age"].fillna(0)
-
-    MonthlyIncome_safe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
-
-    DebtRatio_safe = np.log1p(df_e["DebtRatio"].fillna(0))
+    DebtRatioSafe = np.log1p(df_e["DebtRatio"].fillna(0))
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
-    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (age_safe + 1)
+    DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
 
-    df_e["LatePaymentsPerAge"] = TotalPastDue / (age_safe + 1)
+    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
+
+    AgeRisk = np.where(AgeSafe < 25, 1,
+                     np.where(AgeSafe < 35, 0.8,
+                     np.where(AgeSafe < 50, 0.6, 0.4)))
+
+    DelinquencyScore = (
+        NumberOfTime3059DaysPastDueNotWorse +
+        NumberOfTime6089DaysPastDueNotWorse * 2 +
+        NumberOfTimes90DaysLate * 3
+    )
+
+    HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+
+    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
+
+    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
+
+    df_e["HasAnyDelinquency"] = HasAnyDelinquency
+
+    df_e["HasMajorDelinquency"] = (
+        (NumberOfTime6089DaysPastDueNotWorse  > 0) |
+        (NumberOfTimes90DaysLate > 0)
+    ).astype(int)
+
+    df_e["SevereDelinquency"] = (
+        (NumberOfTimes90DaysLate > 0) & 
+        (NumberOfTime6089DaysPastDueNotWorse > 0)
+    ).astype(int)
+
+    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (AgeSafe + 1)
+
+    df_e["LatePaymentsPerAge"] = TotalPastDue / (AgeSafe + 1)
 
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
 
-    IncomePerCreditLine = MonthlyIncome_safe / CreditLinesSafe
+    df_e["LongTermLateFraction"] = NumberOfTimes90DaysLate / (TotalPastDue+ 1)
+
+    df_e['90DaysLate_Squared'] = NumberOfTimes90DaysLate ** 2
+
+    df_e["IncomePerCreditLineHasDelinquencies"] = IncomePerCreditLine * HasAnyDelinquency
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
 
-    df_e["DebtToIncome"] = DebtRatio_safe * MonthlyIncome_safe
+    df_e["DebtToIncome"] = DebtRatioSafe * MonthlyIncomeSafe
 
-    AgeRisk = np.where(df_e["age"].fillna(0) < 25, 1,
-                     np.where(df_e["age"].fillna(0) < 35, 0.8,
-                     np.where(df_e["age"].fillna(0) < 50, 0.6, 0.4)))
+    df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
 
-    df_e["AgeRisk"] = AgeRisk
+    Age_bins = [0, 25, 50, 120] 
+    Age_labels = ["Young", "Mid", "Senior"]
+    AgeBucket = pd.cut(AgeSafe, bins=Age_bins, labels=Age_labels)
 
-    df_e["DebtToIncomeAgeRisk"] = df_e["DebtToIncome"] * AgeRisk     
+    DelinquencyScore_bins=[-1, 0, 1, 3, 6, np.inf]
+    DelinquencyScore_labels=["None", "Few", "Moderate", "Frequent", "Chronic"]
+    DelinquencyBucket = pd.cut(DelinquencyScore, bins=DelinquencyScore_bins, labels=DelinquencyScore_labels)
 
-    df["IncomePerCreditLine_HasDelinquencies"] = IncomePerCreditLine * HasDelinquencies
+    Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
+    Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
+    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
 
-    utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
-    utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=utilization_bins, labels=utilization_labels)
+    Late_bins = [-1, 0, 1, 3, 6, np.inf]
+    Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
+    LatePaymentBucket = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
 
-    age_bins = [0, 25, 50, 120] 
-    age_labels = ["Young", "Mid", "Senior"]
-    df_e["AgeBucket"] = pd.cut(age_safe, bins=age_bins, labels=age_labels)
+    df_e["AgeBucket"] = AgeBucket
 
-    late_bins = [-1, 0, 1, 3, 6, np.inf]
-    late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=late_bins, labels=late_labels)
+    df_e["DelinquencyBucket"] = DelinquencyBucket
+
+    df_e["UtilizationBucket"] = UtilizationBucket
+
+    df_e["LatePaymentBucket"] = LatePaymentBucket
+
+    df_e["UtilizationBucketLateBucket"] = UtilizationBucket.astype(str) + "_" + LatePaymentBucket.astype(str)
 
     df_e = df_e.drop(
         ["RevolvingUtilizationOfUnsecuredLines", 
@@ -332,22 +366,19 @@ def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
 
     neg_count = (y_train == 0).sum()
     pos_count = (y_train == 1).sum()
+
     minority_class = 1 if pos_count < neg_count else 0
     majority_class = 0 if minority_class == 1 else 1
-    print(f"Minority class: {minority_class} ({min(pos_count, neg_count)} samples)")
-    print(f"Majority class: {majority_class} ({max(pos_count, neg_count)} samples)")
 
-    if bias_mode is None:
-        scale_pos_weight = 1.0
-        print("Using normal class weights (no bias).")
-    elif bias_mode is False:
+    if bias_mode is False:
         scale_pos_weight = neg_count / max(1, pos_count)
-        print("Biasing toward minority class (upweighting positives).")
+        print("Biasing toward minority class")
     elif bias_mode is True:
         scale_pos_weight = pos_count / max(1, neg_count)
-        print("Biasing toward majority class (upweighting negatives).")
+        print("Biasing toward majority class")
     else:
-        raise ValueError("bias_mode must be None, True, or False")
+        scale_pos_weight = 1.0
+        print("Using normal class weights")
 
     tuned_params = {
         'subsample': 0.9,
@@ -373,31 +404,31 @@ def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
 
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
+    all_features = model.get_booster().feature_names
     importance_dict = model.get_booster().get_score(importance_type="gain")
-    importance_data = [
-        {"Feature": feat, "Importance": importance_dict.get(feat, 0.0)}
-        for feat in feature_cols
-    ]
-    importance_df = pd.DataFrame(importance_data).sort_values(
-        "Importance", ascending=False
-    ).reset_index(drop=True)
+    full_importance = {feat: importance_dict.get(feat, 0.0) for feat in all_features}
 
-    numeric_feats = [f for f in feature_cols if f not in cat_cols]
-    top_numeric = (
-        importance_df[importance_df["Feature"].isin(numeric_feats)]
-        ["Feature"]
-        .head(n_to_keep)
-        .tolist()
+    importance_df = (
+        pd.DataFrame({
+            "Feature": list(full_importance.keys()),
+            "Importance": list(full_importance.values())
+        })
+        .sort_values("Importance", ascending=False)
+        .reset_index(drop=True)
     )
 
-    kept_features = sorted(set(top_numeric + cat_cols), key=lambda x: feature_cols.index(x))
-    dropped_features = [f for f in feature_cols if f not in kept_features]
+    numeric_feats = [f for f in feature_cols if f not in cat_cols]
+    top_numeric = importance_df[importance_df["Feature"].isin(numeric_feats)]["Feature"].head(n_to_keep).tolist()
+    kept_features = top_numeric + cat_cols
+    dropped_features = [f for f in numeric_feats if f not in top_numeric]
 
-    print(f"\nKept {len(kept_features)} features (including all {len(cat_cols)} categorical).")
-    print(f"Dropped {len(dropped_features)} features (lowest-importance numeric only).")
+    print(f"Kept {len(kept_features)} select features (including all {len(cat_cols)} categorical)")
+    print(f"Dropped:{len(dropped_features)} numeric select features cols")
+    if dropped_features:
+        print(f"Dropped cols:{dropped_features}")
     print(importance_df)
 
-    return df_temp[kept_features], dropped_features
+    return df_temp[kept_features].copy(), dropped_features
 
 def impute_and_scale(df):
 
@@ -439,9 +470,11 @@ def impute_and_scale(df):
             unique_cats = df_copy[col].astype(str).unique()
             cat_maps[col] = {cat: idx for idx, cat in enumerate(unique_cats)}
 
+    imputed_flags = [col for col in df_copy.columns if col.startswith("Was") and col.endswith("Imputed")]
+
     print("Imputed, flagged, and scaled features")
 
-    return df_copy, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_cols, cat_col_order, cat_maps
+    return df_copy, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_cols, cat_col_order, cat_maps, imputed_flags
 
 def transform_val_test(
     df, 
@@ -486,9 +519,11 @@ def transform_val_test(
     if train_columns is not None:
         df_copy = df_copy.reindex(columns=train_columns, fill_value=0)
 
+    imputed_flags = [col for col in df_copy.columns if col.startswith("Was") and col.endswith("Imputed")]
+
     print("Imputed, flagged, and scaled features")
 
-    return df_copy
+    return df_copy, imputed_flags
 
 def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=True):
 
@@ -594,8 +629,7 @@ df_train = dfs["train"]
 
 
 # Summary
-print(dataset_summary(df_train))
-df_train.head(5)
+dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
 # In[5]:
@@ -671,7 +705,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 # In[10]:
 
 
-#Engineer_features
+# Engineer_features
 df_e = engineer_features(X_train)
 
 
@@ -700,14 +734,14 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=21, bias_mode=None)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14, bias_mode=None)
 
 
 # In[15]:
 
 
 # Impute and scale
-df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_col_order, cat_col_order, cat_maps = impute_and_scale(
+X_train, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_col_order, cat_col_order, cat_maps, X_train_flags = impute_and_scale(
     df_selected
 )
 
@@ -719,7 +753,7 @@ df_processed, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order
 all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop + fs_cols_to_drop
 
 X_val = engineer_features(X_val)
-X_val = transform_val_test(    
+X_val, X_val_flags = transform_val_test(    
     X_val,
     all_cols_to_drop,
     num_imputer,
@@ -730,11 +764,11 @@ X_val = transform_val_test(
     skewed_col_order,
     cat_col_order,
     rare_maps,
-    train_columns=df_processed.columns,
+    train_columns=X_train.columns,
 )
 
 X_test = engineer_features(X_test)
-X_test = transform_val_test(
+X_test, X_test_flags = transform_val_test(
     X_test,
     all_cols_to_drop,
     num_imputer,
@@ -745,10 +779,8 @@ X_test = transform_val_test(
     skewed_col_order,
     cat_col_order,
     rare_maps,
-    train_columns=df_processed.columns,
+    train_columns=X_train.columns,
 )
-
-X_train = df_processed.copy()
 
 
 # In[17]:
@@ -762,7 +794,7 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
 #summary
-print(dataset_summary(X_train))
+dataset_summary(X_train, y_train)
 
 
 # In[19]:
@@ -776,20 +808,21 @@ y_test = le.transform(y_test)
 
 for col in cat_col_order:
     X_train[col] = X_train[col].astype(str).map(cat_maps[col]).astype(int)
-    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).astype(int)
-    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).astype(int)
+    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
+    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
 # In[20]:
 
 
 # Cast to float32 and int64
-X_train_num = X_train[num_col_order].astype('float32').values
-X_val_num = X_val[num_col_order].astype('float32').values
-X_test_num = X_test[num_col_order].astype('float32').values
+X_train_num = X_train[num_col_order + X_train_flags].astype('float32').values
+X_val_num   = X_val[num_col_order + X_val_flags].astype('float32').values
+X_test_num  = X_test[num_col_order + X_test_flags].astype('float32').values
+
 X_train_cat = X_train[cat_col_order].astype('int64').values
-X_val_cat = X_val[cat_col_order].astype('int64').values
-X_test_cat = X_test[cat_col_order].astype('int64').values
+X_val_cat   = X_val[cat_col_order].astype('int64').values
+X_test_cat  = X_test[cat_col_order].astype('int64').values
 
 
 # In[21]:
@@ -1182,37 +1215,76 @@ plt.show()
 # In[32]:
 
 
-# Importance
+# Importance XGB
+all_features = model_b.get_booster().feature_names
 importance_dict = model_b.get_booster().get_score(importance_type="gain")
+full_importance = {feat: importance_dict.get(feat, 0.0) for feat in all_features}
 importance_df = (
     pd.DataFrame({
-        "Feature": list(importance_dict.keys()),
-        "Importance": list(importance_dict.values())
+        "Feature": list(full_importance.keys()),
+        "Importance": list(full_importance.values())
     })
     .sort_values("Importance", ascending=False)
     .reset_index(drop=True)
 )
-xgb.plot_importance(model_b, importance_type='gain', max_num_features=X_train.shape[1])
-plt.title("Top Feature Importances (Gain)")
-plt.show()
 print(importance_df)
 
 
 # In[33]:
 
 
+# Importance NN
+model_cpu = copy.deepcopy(model).cpu()
+
+def shap_cpu(X):
+    X_num = X[:, :X_train_num_tensor.shape[1]]
+    X_cat = X[:, X_train_num_tensor.shape[1]:].astype(int)
+
+    X_num_tensor = torch.tensor(X_num, dtype=torch.float32)
+    X_cat_tensor = torch.tensor(X_cat, dtype=torch.long)
+
+    model_cpu.eval()
+    with torch.no_grad():
+        logits = model_cpu(X_num_tensor, X_cat_tensor)
+        probs = torch.sigmoid(logits).numpy()
+    return probs
+
+X_train_combined = np.hstack([X_train_num_tensor.numpy(), X_train_cat_tensor.numpy()])
+X_val_combined = np.hstack([X_val_num_tensor.numpy(), X_val_cat_tensor.numpy()])
+background_full = X_train_combined  
+background = shap.sample(background_full, 100)
+explainer = shap.KernelExplainer(shap_cpu, background)
+X_val_sample = X_val_combined[:500]
+shap_values = explainer.shap_values(X_val_sample)
+feature_names = list(num_col_order) + list(cat_col_order) + list(X_train_flags)
+
+
+shap_values_array = np.array(shap_values)  
+mean_abs_shap = np.abs(shap_values_array).mean(axis=0)
+shap_importance = pd.DataFrame({
+    "feature": feature_names,
+    "mean_abs_shap": mean_abs_shap
+})
+
+shap_importance = shap_importance.sort_values(by="mean_abs_shap", ascending=False)
+print(shap_importance)
+
+
+# In[34]:
+
+
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[34]:
+# In[35]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[35]:
+# In[36]:
 
 
 # Save for hosting
@@ -1225,12 +1297,9 @@ joblib.dump(std_scaler, "std_scaler.pkl")
 joblib.dump(num_col_order, "num_col_order.pkl")
 joblib.dump(cat_maps, "cat_maps.pkl")
 joblib.dump(cat_col_order, "cat_col_order.pkl")
+joblib.dump(X_train_flags, "X_train_flags.pkl")
 joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
 
 
-# In[ ]:
-
-
-
-
+# #### 
