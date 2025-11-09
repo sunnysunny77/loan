@@ -34,9 +34,9 @@ print("Using device:", device)
 # Constants
 lr = 1e-3
 weight_decay = 1e-4
-batch_size = 32
+batch_size = 64
 num_epochs = 75
-num_runs = 5
+num_runs = 3
 max_patience = 13
 
 # pd 
@@ -793,11 +793,45 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 # In[18]:
 
 
+# Zero importance cols 
+zero_importance_cols = [
+    'WasLatePaymentsPerAgeImputed',
+    'WasHasAnyDelinquencyImputed',
+    'WasHasMajorDelinquencyImputed',
+    'WasTotalPastDue_SquaredImputed',
+    'Was90DaysLate_SquaredImputed',
+    'WasSevereDelinquencyImputed',
+    'WasUtilizationPerAgeImputed',
+    'WasNormalizedUtilizationImputed',
+    'WasDebtToIncomeAgeRiskImputed',
+    'WasLongTermLateFractionImputed',
+    'WasDebtToIncomeImputed',
+    'WasAgeBucketImputed',
+    'WasDelinquencyBucketImputed',
+    'WasUtilizationBucketImputed',
+    'WasLatePaymentBucketImputed',
+    'WasUtilizationBucketLateBucketImputed'
+]
+
+X_train = X_train.drop(columns=zero_importance_cols)
+X_val   = X_val.drop(columns=zero_importance_cols)
+X_test  = X_test.drop(columns=zero_importance_cols)
+
+flags_to_keep = [f for f in X_train_flags if f not in zero_importance_cols]
+
+X_train_flags = flags_to_keep
+X_val_flags   = flags_to_keep
+X_test_flags  = flags_to_keep
+
+
+# In[19]:
+
+
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[19]:
+# In[20]:
 
 
 # Encode
@@ -812,7 +846,7 @@ for col in cat_col_order:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[20]:
+# In[21]:
 
 
 # Cast to float32 and int64
@@ -825,7 +859,7 @@ X_val_cat   = X_val[cat_col_order].astype('int64').values
 X_test_cat  = X_test[cat_col_order].astype('int64').values
 
 
-# In[21]:
+# In[22]:
 
 
 # Convert to tensors
@@ -851,7 +885,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[22]:
+# In[23]:
 
 
 # Datasets
@@ -878,7 +912,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[23]:
+# In[24]:
 
 
 # Model
@@ -953,7 +987,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[24]:
+# In[25]:
 
 
 # Loss
@@ -980,7 +1014,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[25]:
+# In[26]:
 
 
 # Train
@@ -1069,7 +1103,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[26]:
+# In[27]:
 
 
 # Evaluation
@@ -1125,7 +1159,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[27]:
+# In[28]:
 
 
 # Cast to float32 
@@ -1134,27 +1168,26 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[28]:
-
-
-# Find best prarms
-best_params = find_best_param(X_train, y_train)
-
-
-# In[29]:
+# In[30]:
 
 
 # Model
-neg_count = sum(y_train == 0)
-pos_count = sum(y_train == 1)
-
-scale_pos_weight = neg_count / pos_count
+skewed_params = {
+    'scale_pos_weight': 14.0,  
+    'min_child_weight': 1,     
+    'max_depth': 6,           
+    'subsample': 0.7,        
+    'reg_alpha': 0.1,        
+    'reg_lambda': 1.5,         
+    'learning_rate': 0.01,
+    'gamma': 0,
+    'colsample_bytree': 0.6
+}
 
 model_b = xgb.XGBClassifier(
-    **best_params,
+    **skewed_params,
     objective="binary:logistic",
     eval_metric=["auc"],
-    scale_pos_weight=scale_pos_weight,
     n_estimators=1500,
     random_state=42,
     n_jobs=-1,
@@ -1162,20 +1195,20 @@ model_b = xgb.XGBClassifier(
     early_stopping_rounds=100,
     callbacks=[
         xgb.callback.LearningRateScheduler(
-            lambda epoch: best_params["learning_rate"] * (0.99 ** epoch)
+            lambda epoch: skewed_params["learning_rate"] * (0.99 ** epoch)
         )
     ]
 )
 
 
-# In[30]:
+# In[31]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[31]:
+# In[32]:
 
 
 # Evaluation
@@ -1212,7 +1245,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[32]:
+# In[33]:
 
 
 # Importance XGB
@@ -1230,7 +1263,7 @@ importance_df = (
 print(importance_df)
 
 
-# In[33]:
+# In[34]:
 
 
 # Importance NN
@@ -1258,7 +1291,6 @@ X_val_sample = X_val_combined[:500]
 shap_values = explainer.shap_values(X_val_sample)
 feature_names = list(num_col_order) + list(cat_col_order) + list(X_train_flags)
 
-
 shap_values_array = np.array(shap_values)  
 mean_abs_shap = np.abs(shap_values_array).mean(axis=0)
 shap_importance = pd.DataFrame({
@@ -1270,21 +1302,21 @@ shap_importance = shap_importance.sort_values(by="mean_abs_shap", ascending=Fals
 print(shap_importance)
 
 
-# In[34]:
+# In[35]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[35]:
+# In[36]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[36]:
+# In[37]:
 
 
 # Save for hosting
