@@ -36,7 +36,7 @@ lr = 1e-3
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 1
+num_runs = 2
 max_patience = 13
 
 # pd 
@@ -160,9 +160,10 @@ def engineer_features(df):
 
     df_e = df.copy()
 
-    NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0)
-    NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0)
-    NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0)
+
+    NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0).clip(upper=10)
+    NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0).clip(upper=10)
+    NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0).clip(upper=10)
 
     TotalPastDue = (
         NumberOfTime3059DaysPastDueNotWorse
