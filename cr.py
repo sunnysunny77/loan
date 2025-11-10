@@ -36,7 +36,7 @@ lr = 1e-3
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 2
+num_runs = 5
 max_patience = 13
 
 # pd 
@@ -116,7 +116,7 @@ def dataset_summary(df, y=None, threshold=0.7):
 
     return summary.sort_values("missing_%", ascending=False)
 
-def outlier_handling(df, target_col, threshold_high=99, threshold_low=1):
+def outlier_handling(df, target_col, n_high=100, n_low=10):
 
     df_copy = df.copy()
 
@@ -135,19 +135,24 @@ def outlier_handling(df, target_col, threshold_high=99, threshold_low=1):
 
     y_pred_proba = hgb.predict_proba(X)[:, 1]
 
-    high_val = np.percentile(y_pred_proba, threshold_high)
-    low_val = np.percentile(y_pred_proba, threshold_low)
+    df_copy["__pred_proba__"] = y_pred_proba
+    df_sorted = df_copy.sort_values("__pred_proba__", ascending=True).reset_index(drop=True)
 
-    mask = (y_pred_proba < high_val) & (y_pred_proba > low_val)
-    df_filtered = df_copy.loc[mask].reset_index(drop=True)
+    total_rows = len(df_sorted)
+    start_idx = n_low
+    end_idx = max(0, total_rows - n_high)
+    df_filtered = df_sorted.iloc[start_idx:end_idx].drop(columns="__pred_proba__").reset_index(drop=True)
 
-    print(f"Dropped: {len(df_copy) - len(df_filtered)} outlier rows")
+    dropped = total_rows - len(df_filtered)
+
+    print(f"Dropped {dropped} outlier rows (lowest {n_low}, highest {n_high})")
 
     return df_filtered
 
 def drop_target_and_ids(df):
 
     df_copy = df.copy()
+
     feature_cols_to_drop = ["SeriousDlqin2yrs"]
     target = df_copy["SeriousDlqin2yrs"]
     df_raw_features = df_copy.drop(columns=feature_cols_to_drop)
@@ -160,7 +165,6 @@ def engineer_features(df):
 
     df_e = df.copy()
 
-
     NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0).clip(upper=10)
     NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0).clip(upper=10)
     NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0).clip(upper=10)
@@ -171,27 +175,24 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0)
-
+    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
     RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
+    RevolvingUtilizationOfUnsecuredLines = RevolvingUtilizationOfUnsecuredLines.replace(0, np.nan)
 
-    AgeSafe = df_e["age"].fillna(0)
+    AgeSafe = df_e["age"].replace(0, np.nan)
 
-    MonthlyIncomeSafe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
+    MonthlyIncomeSafe = df_e["MonthlyIncome"]
 
-    DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0).fillna(0)
-
-    DebtRatioSafe = np.log1p(DebtRatioCapped)
+    DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
-    DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
-
+    DebtToIncome = DebtRatioCapped * MonthlyIncomeSafe
     IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
 
-    AgeRisk = np.where(AgeSafe < 25, 1,
-                     np.where(AgeSafe < 35, 0.8,
-                     np.where(AgeSafe < 50, 0.6, 0.4)))
+    AgeRisk = np.where(AgeSafe < 25, 1.0,
+                 np.where(AgeSafe < 35, 0.8,
+                 np.where(AgeSafe < 50, 0.6, 0.4)))
 
     DelinquencyScore = (
         NumberOfTime3059DaysPastDueNotWorse +
@@ -202,82 +203,74 @@ def engineer_features(df):
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
 
     df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
-
     df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
-
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
-
     df_e["HasMajorDelinquency"] = (
-        (NumberOfTime6089DaysPastDueNotWorse  > 0) |
+        (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
     ).astype(int)
-
     df_e["SevereDelinquency"] = (
-        (NumberOfTimes90DaysLate > 0) & 
+        (NumberOfTimes90DaysLate > 0) &
         (NumberOfTime6089DaysPastDueNotWorse > 0)
     ).astype(int)
 
-    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / (AgeSafe + 1)
-
-    df_e["LatePaymentsPerAge"] = TotalPastDue / (AgeSafe + 1)
-
+    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+    df_e["LatePaymentsPerAge"] = TotalPastDue / AgeSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
 
-    df_e["LongTermLateFraction"] = NumberOfTimes90DaysLate / (TotalPastDue+ 1)
-
-    df_e['90DaysLate_Squared'] = NumberOfTimes90DaysLate ** 2
-
-    df_e["IncomePerCreditLineHasDelinquencies"] = IncomePerCreditLine * HasAnyDelinquency
-
+    df_e["90DaysLate_Squared"] = NumberOfTimes90DaysLate ** 2
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
-
-    df_e["DebtToIncome"] = DebtRatioSafe * MonthlyIncomeSafe
-
+    df_e["IncomePerCreditLineHasDelinquencies"] = IncomePerCreditLine * HasAnyDelinquency
+    df_e["DebtToIncome"] = DebtToIncome
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
 
-    Age_bins = [0, 25, 50, 120] 
+    Age_bins = [0, 25, 50, 120]
     Age_labels = ["Young", "Mid", "Senior"]
-    AgeBucket = pd.cut(AgeSafe, bins=Age_bins, labels=Age_labels)
+    df_e["AgeBucket"] = pd.cut(AgeSafe, bins=Age_bins, labels=Age_labels)
 
-    DelinquencyScore_bins=[-1, 0, 1, 3, 6, np.inf]
-    DelinquencyScore_labels=["None", "Few", "Moderate", "Frequent", "Chronic"]
-    DelinquencyBucket = pd.cut(DelinquencyScore, bins=DelinquencyScore_bins, labels=DelinquencyScore_labels)
+    DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
+    DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
+    df_e["DelinquencyBucket"] = pd.cut(DelinquencyScore, bins=DelinquencyScore_bins, labels=DelinquencyScore_labels)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
+    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    LatePaymentBucket = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
+    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
 
-    df_e["AgeBucket"] = AgeBucket
+    df_e["UtilizationBucketLateBucket"] = (
+        df_e["UtilizationBucket"].astype(str) + "_" + df_e["LatePaymentBucket"].astype(str)
+    )
 
-    df_e["DelinquencyBucket"] = DelinquencyBucket
+    engineered_cols = [
+        "TotalPastDue_Squared",
+        "NormalizedUtilization",
+        "HasAnyDelinquency",
+        "HasMajorDelinquency",
+        "SevereDelinquency",
+        "UtilizationPerAge",
+        "LatePaymentsPerAge",
+        "LatePaymentsPerCreditLine",
+        "90DaysLate_Squared",
+        "IncomePerCreditLineHasDelinquencies",
+        "IncomePerCreditLine",
+        "DebtToIncome",
+        "DebtToIncomeAgeRisk",
+        "AgeBucket",
+        "DelinquencyBucket",
+        "UtilizationBucket",
+        "LatePaymentBucket",
+        "UtilizationBucketLateBucket"
+    ]
 
-    df_e["UtilizationBucket"] = UtilizationBucket
+    engineered_df = df_e[engineered_cols]
 
-    df_e["LatePaymentBucket"] = LatePaymentBucket
+    print(f"Engineered {len(engineered_cols)} features")
+    print(f"Engineered cols: {engineered_cols}")
 
-    df_e["UtilizationBucketLateBucket"] = UtilizationBucket.astype(str) + "_" + LatePaymentBucket.astype(str)
-
-    df_e = df_e.drop(
-        ["RevolvingUtilizationOfUnsecuredLines", 
-         "NumberOfTimes90DaysLate",
-         "NumberRealEstateLoansOrLines",
-         "DebtRatio",
-         "MonthlyIncome", 
-         "NumberOfOpenCreditLinesAndLoans",
-         "NumberOfTime30-59DaysPastDueNotWorse",
-         "NumberOfTime60-89DaysPastDueNotWorse",
-         "age",
-         "NumberOfDependents",
-        ], axis=1, errors='ignore')
-
-    print(f"Engineered: {len(df_e)} feature cols")
-    print(f"Engineered cols: {list(df_e)}")
-
-    return df_e
+    return engineered_df
 
 def drop_high_missing_cols(df, threshold=0.3):
 
@@ -350,6 +343,7 @@ def collapse_rare_categories(df, threshold=0.005):
 def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
 
     df_temp = df.copy()
+
     cat_cols = df_temp.select_dtypes(include=["object", "category"]).columns.tolist()
 
     df_model = df_temp.copy()
@@ -386,14 +380,14 @@ def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
         print("Using normal class weights")
 
     tuned_params = {
-        'subsample': 0.9,
-        'reg_lambda': 0.5,
-        'reg_alpha': 0.3,
-        'min_child_weight': 5,
-        'max_depth': 5,
-        'learning_rate': 0.01,
-        'gamma': 0.0,
-        'colsample_bytree': 0.7
+        'subsample': 0.9, 
+        'reg_lambda': 0.5, 
+        'reg_alpha': 0.1, 
+        'min_child_weight': 7, 
+        'max_depth': 5, 
+        'learning_rate': 0.01, 
+        'gamma': 0.2, 
+        'colsample_bytree': 0.8
     }
 
     model = xgb.XGBClassifier(
@@ -562,7 +556,7 @@ def find_best_param(X_train, y_train):
     neg_count = sum(y_train == 0)
     pos_count = sum(y_train == 1)
 
-    scale_pos_weight = neg_count / pos_count
+    base_scale_pos_weight = neg_count / pos_count
 
     param_grid = {
         "max_depth": [4, 5, 6, 7, 8],
@@ -573,11 +567,11 @@ def find_best_param(X_train, y_train):
         "reg_alpha": [0, 0.05, 0.1, 0.3],
         "reg_lambda": [0.5, 0.8, 1.0, 1.2],
         "learning_rate": [0.01, 0.03, 0.05],
+        "scale_pos_weight": [base_scale_pos_weight * m for m in [1.0, 1.5, 2.0, 2.5, 3.0]]
     }
 
     xgb_clf = xgb.XGBClassifier(
         objective="binary:logistic",
-        scale_pos_weight=scale_pos_weight,
         n_estimators=800,
         random_state=42,
         n_jobs=-1,
@@ -588,9 +582,9 @@ def find_best_param(X_train, y_train):
     search = RandomizedSearchCV(
         xgb_clf,
         param_distributions=param_grid,
-        n_iter=30,
+        n_iter=30,  
         scoring=f2_scorer,
-        cv=3,
+        cv=3,      
         verbose=2,
         random_state=42
     )
@@ -640,13 +634,6 @@ dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 # In[5]:
 
 
-# Drop duplicates
-df_train = check_and_drop_duplicates(df_train)
-
-
-# In[6]:
-
-
 # Outlier Handling
 numeric_df = df_train.select_dtypes(include=['number'])
 
@@ -656,20 +643,17 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 
-threshold_high = 99.96
-threshold_low = 0.096
 df_filtered = outlier_handling(
     df_train,
     target_col="SeriousDlqin2yrs",
-    threshold_high=threshold_high,
-    threshold_low=threshold_low
+    n_high=22, 
+    n_low=9
 )
-
 
 df_filtered.describe()
 
 
-# In[7]:
+# In[6]:
 
 
 # Select targets
@@ -677,14 +661,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[8]:
+# In[7]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[9]:
+# In[8]:
 
 
 # Split train/test
@@ -696,6 +680,13 @@ X_train_full, X_test, y_train_full, y_test = train_test_split(
 X_train, X_val, y_train, y_val = train_test_split(
     X_train_full, y_train_full, test_size=0.2, stratify=y_train_full, random_state=42
 )
+
+
+# In[9]:
+
+
+# Drop duplicates
+X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
 # In[10]:
@@ -782,8 +773,8 @@ X_test, X_test_flags = transform_val_test(
 # In[17]:
 
 
-# Drop duplicates
-X_train, y_train = check_and_drop_duplicates(X_train, y_train)
+#summary
+dataset_summary(X_train, y_train)
 
 
 # In[18]:
@@ -791,22 +782,21 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 # Zero importance cols 
 zero_importance_cols = [
-    'WasLatePaymentsPerAgeImputed',
-    'WasHasAnyDelinquencyImputed',
-    'WasHasMajorDelinquencyImputed',
-    'WasTotalPastDue_SquaredImputed',
-    'Was90DaysLate_SquaredImputed',
-    'WasSevereDelinquencyImputed',
-    'WasUtilizationPerAgeImputed',
-    'WasNormalizedUtilizationImputed',
-    'WasDebtToIncomeAgeRiskImputed',
-    'WasLongTermLateFractionImputed',
-    'WasDebtToIncomeImputed',
-    'WasAgeBucketImputed',
-    'WasDelinquencyBucketImputed',
-    'WasUtilizationBucketImputed',
-    'WasLatePaymentBucketImputed',
-    'WasUtilizationBucketLateBucketImputed'
+    "WasHasAnyDelinquencyImputed", 
+    "WasLatePaymentsPerAgeImputed", 
+    "WasTotalPastDue_SquaredImputed", 
+    "WasNormalizedUtilizationImputed", 
+    "Was90DaysLate_SquaredImputed", 
+    "WasUtilizationPerAgeImputed", 
+    "WasHasMajorDelinquencyImputed", 
+    "WasSevereDelinquencyImputed", 
+    "WasDebtToIncomeAgeRiskImputed", 
+    "WasDebtToIncomeImputed", 
+    "WasAgeBucketImputed", 
+    "WasDelinquencyBucketImputed", 
+    "WasUtilizationBucketImputed", 
+    "WasLatePaymentBucketImputed", 
+    "WasUtilizationBucketLateBucketImputed"
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -823,13 +813,6 @@ X_test_flags  = flags_to_keep
 # In[19]:
 
 
-#summary
-dataset_summary(X_train, y_train)
-
-
-# In[20]:
-
-
 # Encode
 le = LabelEncoder()
 y_train = le.fit_transform(y_train)
@@ -842,7 +825,7 @@ for col in cat_col_order:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[21]:
+# In[20]:
 
 
 # Cast to float32 and int64
@@ -855,7 +838,7 @@ X_val_cat   = X_val[cat_col_order].astype('int64').values
 X_test_cat  = X_test[cat_col_order].astype('int64').values
 
 
-# In[22]:
+# In[21]:
 
 
 # Convert to tensors
@@ -881,7 +864,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[22]:
 
 
 # Datasets
@@ -908,7 +891,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[23]:
 
 
 # Model
@@ -983,7 +966,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[24]:
 
 
 # Loss
@@ -1010,7 +993,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[26]:
+# In[25]:
 
 
 # Train
@@ -1099,7 +1082,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[27]:
+# In[26]:
 
 
 # Evaluation
@@ -1155,7 +1138,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[28]:
+# In[27]:
 
 
 # Cast to float32 
@@ -1164,36 +1147,25 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
+# In[28]:
+
+
+best_param = find_best_param(X_train, y_train)
+
+
 # In[29]:
 
 
 # Model
-skewed_params = {
-    'scale_pos_weight': 14.0,  
-    'min_child_weight': 1,     
-    'max_depth': 6,           
-    'subsample': 0.7,        
-    'reg_alpha': 0.1,        
-    'reg_lambda': 1.5,         
-    'learning_rate': 0.01,
-    'gamma': 0,
-    'colsample_bytree': 0.6
-}
-
 model_b = xgb.XGBClassifier(
-    **skewed_params,
+    **best_param,
     objective="binary:logistic",
     eval_metric=["auc"],
-    n_estimators=1500,
+    n_estimators=800,
     random_state=42,
     n_jobs=-1,
     verbosity=1,
-    early_stopping_rounds=100,
-    callbacks=[
-        xgb.callback.LearningRateScheduler(
-            lambda epoch: skewed_params["learning_rate"] * (0.99 ** epoch)
-        )
-    ]
+    early_stopping_rounds=100
 )
 
 
@@ -1330,4 +1302,8 @@ joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
 
 
-# #### 
+# In[ ]:
+
+
+
+
