@@ -23,13 +23,17 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    RevolvingUtilizationOfUnsecuredLines = np.log1p(df_e["RevolvingUtilizationOfUnsecuredLines"].fillna(0))
+    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0)
+    
+    RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
 
     AgeSafe = df_e["age"].fillna(0)
     
     MonthlyIncomeSafe = np.log1p(df_e["MonthlyIncome"].fillna(1.0))
+        
+    DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0).fillna(0)
     
-    DebtRatioSafe = np.log1p(df_e["DebtRatio"].fillna(0))
+    DebtRatioSafe = np.log1p(DebtRatioCapped)
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
@@ -121,6 +125,9 @@ def engineer_features(df):
          "age",
          "NumberOfDependents",
         ], axis=1, errors='ignore')
+
+    print(f"Engineered: {len(df_e)} feature cols")
+    print(f"Engineered cols: {list(df_e)}")
 
     return df_e
 

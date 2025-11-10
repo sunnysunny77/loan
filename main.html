@@ -7543,13 +7543,17 @@ a.anchor-link {
         <span class="o">+</span> <span class="n">NumberOfTime6089DaysPastDueNotWorse</span>
     <span class="p">)</span>
 
-    <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+    <span class="n">RevolvingUtilizationOfUnsecuredLinesCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    
+    <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">RevolvingUtilizationOfUnsecuredLinesCapped</span><span class="p">)</span>
 
     <span class="n">AgeSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
     
     <span class="n">MonthlyIncomeSafe</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
+        
+    <span class="n">DebtRatioCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">10000.0</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
     
-    <span class="n">DebtRatioSafe</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+    <span class="n">DebtRatioSafe</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">DebtRatioCapped</span><span class="p">)</span>
 
     <span class="n">CreditLinesSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfOpenCreditLinesAndLoans"</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
 
@@ -7641,6 +7645,9 @@ a.anchor-link {
          <span class="s2">"age"</span><span class="p">,</span>
          <span class="s2">"NumberOfDependents"</span><span class="p">,</span>
         <span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s1">'ignore'</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Engineered: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df_e</span><span class="p">)</span><span class="si">}</span><span class="s2"> feature cols"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Engineered cols: </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">df_e</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="k">return</span> <span class="n">df_e</span>
 
