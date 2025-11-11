@@ -46,7 +46,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[2]:
+# In[43]:
 
 
 def load_datasets(base_path="./"):
@@ -165,8 +165,6 @@ def engineer_features(df):
 
     df_e = df.copy()
 
-    df_e["age"] = pd.to_numeric(df_e["age"], errors='coerce')
-
     NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0).clip(upper=10)
     NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0).clip(upper=10)
     NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0).clip(upper=10)
@@ -203,31 +201,19 @@ def engineer_features(df):
 
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
 
-    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
-    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
+    df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
     ).astype(int)
-    df_e["SevereDelinquency"] = (
-        (NumberOfTimes90DaysLate > 0) &
-        (NumberOfTime6089DaysPastDueNotWorse > 0)
-    ).astype(int)
 
     df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / AgeSafe
-    df_e["LatePaymentsPerAge"] = TotalPastDue / AgeSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
 
-    df_e["90DaysLate_Squared"] = NumberOfTimes90DaysLate ** 2
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
-    df_e["IncomePerCreditLineHasDelinquencies"] = IncomePerCreditLine * HasAnyDelinquency
-    df_e["DebtToIncome"] = DebtToIncome
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
-
-    Age_bins = [0, 25, 50, 120]
-    Age_labels = ["Young", "Mid", "Senior"]
-    df_e["AgeBucket"] = pd.cut(AgeSafe, bins=Age_bins, labels=Age_labels)
+    df_e["AgeRisk"] = AgeRisk
 
     DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
     DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
@@ -235,34 +221,26 @@ def engineer_features(df):
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
+    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
+    LatePaymentBucket = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
 
     df_e["UtilizationBucketLateBucket"] = (
-        df_e["UtilizationBucket"].astype(str) + "_" + df_e["LatePaymentBucket"].astype(str)
+        UtilizationBucket.astype(str) + "_" + LatePaymentBucket.astype(str)
     )
 
     engineered_cols = [
-        "TotalPastDue_Squared",
-        "NormalizedUtilization",
+        "DelinquencyScore",
         "HasAnyDelinquency",
         "HasMajorDelinquency",
-        "SevereDelinquency",
         "UtilizationPerAge",
-        "LatePaymentsPerAge",
         "LatePaymentsPerCreditLine",
-        "90DaysLate_Squared",
-        "IncomePerCreditLineHasDelinquencies",
         "IncomePerCreditLine",
-        "DebtToIncome",
         "DebtToIncomeAgeRisk",
-        "AgeBucket",
+        "AgeRisk",
         "DelinquencyBucket",
-        "UtilizationBucket",
-        "LatePaymentBucket",
         "UtilizationBucketLateBucket"
     ]
 
@@ -793,19 +771,10 @@ dataset_summary(X_train, y_train)
 # Zero importance cols 
 zero_importance_cols = [
     "WasHasAnyDelinquencyImputed", 
-    "WasLatePaymentsPerAgeImputed", 
-    "WasTotalPastDue_SquaredImputed", 
-    "WasNormalizedUtilizationImputed", 
-    "Was90DaysLate_SquaredImputed", 
     "WasUtilizationPerAgeImputed", 
     "WasHasMajorDelinquencyImputed", 
-    "WasSevereDelinquencyImputed", 
     "WasDebtToIncomeAgeRiskImputed", 
-    "WasDebtToIncomeImputed", 
-    "WasAgeBucketImputed", 
     "WasDelinquencyBucketImputed", 
-    "WasUtilizationBucketImputed", 
-    "WasLatePaymentBucketImputed", 
     "WasUtilizationBucketLateBucketImputed"
 ]
 
@@ -894,7 +863,7 @@ train_ds = TabularDataset(X_train_num_tensor, X_train_cat_tensor, y_train_tensor
 val_ds = TabularDataset(X_val_num_tensor, X_val_cat_tensor, y_val_tensor)
 test_ds = TabularDataset(X_test_num_tensor, X_test_cat_tensor, y_test_tensor)
 
-train_loader = DataLoader(train_ds, batch_size=64, shuffle=True, drop_last=True)
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
 val_loader = DataLoader(val_ds, batch_size=64)
 test_loader = DataLoader(test_ds, batch_size=64)
 
@@ -1000,7 +969,7 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=3)
+loss_fn = FocalLoss(alpha=alpha, gamma=2)
 
 
 # In[26]:
@@ -1092,7 +1061,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[39]:
+# In[27]:
 
 
 # Evaluation
@@ -1110,7 +1079,7 @@ y_val_probs = np.array(y_val_probs)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2.15)
+f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2.3)
 best_thresh_a = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
@@ -1157,13 +1126,13 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[29]:
+# In[44]:
 
 
 best_param = find_best_param(X_train, y_train)
 
 
-# In[30]:
+# In[46]:
 
 
 # Model
@@ -1175,18 +1144,18 @@ model_b = xgb.XGBClassifier(
     random_state=42,
     n_jobs=-1,
     verbosity=1,
-    early_stopping_rounds=100
+    early_stopping_rounds=100,
 )
 
 
-# In[31]:
+# In[47]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[48]:
+# In[49]:
 
 
 # Evaluation
@@ -1194,7 +1163,7 @@ y_probs = model_b.predict_proba(X_test)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2.26)
+f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2.6)
 best_thresh_b = thresholds[np.argmax(f_beta_scores)]
 
 y_pred = (y_probs > best_thresh_b).astype(int)
@@ -1223,7 +1192,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[33]:
+# In[50]:
 
 
 # Importance XGB
@@ -1299,21 +1268,21 @@ shap_importance = pd.DataFrame({
 print(shap_importance)
 
 
-# In[49]:
+# In[51]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[50]:
+# In[52]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[51]:
+# In[53]:
 
 
 # Save for hosting

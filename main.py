@@ -13,8 +13,6 @@ def engineer_features(df):
     
     df_e = df.copy()
 
-    df_e["age"] = pd.to_numeric(df_e["age"], errors='coerce')
-
     NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0).clip(upper=10)
     NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0).clip(upper=10)
     NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0).clip(upper=10)
@@ -27,6 +25,7 @@ def engineer_features(df):
 
     RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
     RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
+
     AgeSafe = df_e["age"].replace(0, np.nan)
 
     MonthlyIncomeSafe = df_e["MonthlyIncome"]
@@ -49,32 +48,20 @@ def engineer_features(df):
     )
 
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
-
-    df_e["TotalPastDue_Squared"] = TotalPastDue ** 2
-    df_e["NormalizedUtilization"] = np.sqrt(RevolvingUtilizationOfUnsecuredLines)
+    
+    df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
     ).astype(int)
-    df_e["SevereDelinquency"] = (
-        (NumberOfTimes90DaysLate > 0) &
-        (NumberOfTime6089DaysPastDueNotWorse > 0)
-    ).astype(int)
 
     df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / AgeSafe
-    df_e["LatePaymentsPerAge"] = TotalPastDue / AgeSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
 
-    df_e["90DaysLate_Squared"] = NumberOfTimes90DaysLate ** 2
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
-    df_e["IncomePerCreditLineHasDelinquencies"] = IncomePerCreditLine * HasAnyDelinquency
-    df_e["DebtToIncome"] = DebtToIncome
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
-
-    Age_bins = [0, 25, 50, 120]
-    Age_labels = ["Young", "Mid", "Senior"]
-    df_e["AgeBucket"] = pd.cut(AgeSafe, bins=Age_bins, labels=Age_labels)
+    df_e["AgeRisk"] = AgeRisk
 
     DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
     DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
@@ -82,40 +69,32 @@ def engineer_features(df):
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    df_e["UtilizationBucket"] = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
+    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    df_e["LatePaymentBucket"] = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
+    LatePaymentBucket = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
 
     df_e["UtilizationBucketLateBucket"] = (
-        df_e["UtilizationBucket"].astype(str) + "_" + df_e["LatePaymentBucket"].astype(str)
+        UtilizationBucket.astype(str) + "_" + LatePaymentBucket.astype(str)
     )
 
     engineered_cols = [
-        "TotalPastDue_Squared",
-        "NormalizedUtilization",
+        "DelinquencyScore",
         "HasAnyDelinquency",
         "HasMajorDelinquency",
-        "SevereDelinquency",
         "UtilizationPerAge",
-        "LatePaymentsPerAge",
         "LatePaymentsPerCreditLine",
-        "90DaysLate_Squared",
-        "IncomePerCreditLineHasDelinquencies",
         "IncomePerCreditLine",
-        "DebtToIncome",
         "DebtToIncomeAgeRisk",
-        "AgeBucket",
+        "AgeRisk",
         "DelinquencyBucket",
-        "UtilizationBucket",
-        "LatePaymentBucket",
         "UtilizationBucketLateBucket"
     ]
 
     engineered_df = df_e[engineered_cols]
 
-    return engineered_df 
+    return engineered_df
 
 class NN(nn.Module):
     def __init__(self, num_numeric, cat_dims, emb_dims):

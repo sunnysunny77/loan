@@ -7533,8 +7533,6 @@ a.anchor-link {
     
     <span class="n">df_e</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
 
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">to_numeric</span><span class="p">(</span><span class="n">df_e</span><span class="p">[</span><span class="s2">"age"</span><span class="p">],</span> <span class="n">errors</span><span class="o">=</span><span class="s1">'coerce'</span><span class="p">)</span>
-
     <span class="n">NumberOfTime3059DaysPastDueNotWorse</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfTime30-59DaysPastDueNotWorse"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
     <span class="n">NumberOfTimes90DaysLate</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfTimes90DaysLate"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
     <span class="n">NumberOfTime6089DaysPastDueNotWorse</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfTime60-89DaysPastDueNotWorse"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
@@ -7547,6 +7545,7 @@ a.anchor-link {
 
     <span class="n">RevolvingUtilizationOfUnsecuredLinesCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
     <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">RevolvingUtilizationOfUnsecuredLinesCapped</span><span class="p">)</span>
+
     <span class="n">AgeSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
 
     <span class="n">MonthlyIncomeSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span>
@@ -7569,32 +7568,20 @@ a.anchor-link {
     <span class="p">)</span>
 
     <span class="n">HasAnyDelinquency</span> <span class="o">=</span> <span class="p">(</span><span class="n">TotalPastDue</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"TotalPastDue_Squared"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDue</span> <span class="o">**</span> <span class="mi">2</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"NormalizedUtilization"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">RevolvingUtilizationOfUnsecuredLines</span><span class="p">)</span>
+    
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScore</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"HasAnyDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">HasAnyDelinquency</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"HasMajorDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
         <span class="p">(</span><span class="n">NumberOfTime6089DaysPastDueNotWorse</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">|</span>
         <span class="p">(</span><span class="n">NumberOfTimes90DaysLate</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
     <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"SevereDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="p">(</span><span class="n">NumberOfTimes90DaysLate</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span>
-        <span class="p">(</span><span class="n">NumberOfTime6089DaysPastDueNotWorse</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
-    <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">/</span> <span class="n">AgeSafe</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentsPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDue</span> <span class="o">/</span> <span class="n">AgeSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDue</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
 
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"90DaysLate_Squared"</span><span class="p">]</span> <span class="o">=</span> <span class="n">NumberOfTimes90DaysLate</span> <span class="o">**</span> <span class="mi">2</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">IncomePerCreditLine</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerCreditLineHasDelinquencies"</span><span class="p">]</span> <span class="o">=</span> <span class="n">IncomePerCreditLine</span> <span class="o">*</span> <span class="n">HasAnyDelinquency</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtToIncome"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtToIncome</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtToIncomeAgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtToIncome</span> <span class="o">*</span> <span class="n">AgeRisk</span>
-
-    <span class="n">Age_bins</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">25</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">120</span><span class="p">]</span>
-    <span class="n">Age_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Young"</span><span class="p">,</span> <span class="s2">"Mid"</span><span class="p">,</span> <span class="s2">"Senior"</span><span class="p">]</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"AgeBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">AgeSafe</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Age_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Age_labels</span><span class="p">)</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"AgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">AgeRisk</span>
 
     <span class="n">DelinquencyScore_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">]</span>
     <span class="n">DelinquencyScore_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"None"</span><span class="p">,</span> <span class="s2">"Few"</span><span class="p">,</span> <span class="s2">"Moderate"</span><span class="p">,</span> <span class="s2">"Frequent"</span><span class="p">,</span> <span class="s2">"Chronic"</span><span class="p">]</span>
@@ -7602,40 +7589,32 @@ a.anchor-link {
 
     <span class="n">Utilization_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.5</span><span class="p">,</span> <span class="mi">10</span><span class="p">]</span>
     <span class="n">Utilization_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Very Low"</span><span class="p">,</span> <span class="s2">"Low"</span><span class="p">,</span> <span class="s2">"Moderate"</span><span class="p">,</span> <span class="s2">"High"</span><span class="p">,</span> <span class="s2">"Very High"</span><span class="p">,</span> <span class="s2">"Extreme"</span><span class="p">]</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">RevolvingUtilizationOfUnsecuredLines</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Utilization_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Utilization_labels</span><span class="p">)</span>
+    <span class="n">UtilizationBucket</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">RevolvingUtilizationOfUnsecuredLines</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Utilization_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Utilization_labels</span><span class="p">)</span>
 
     <span class="n">Late_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">]</span>
     <span class="n">Late_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"NoLate"</span><span class="p">,</span> <span class="s2">"FewLate"</span><span class="p">,</span> <span class="s2">"ModerateLate"</span><span class="p">,</span> <span class="s2">"FrequentLate"</span><span class="p">,</span> <span class="s2">"ChronicLate"</span><span class="p">]</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">TotalPastDue</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Late_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Late_labels</span><span class="p">)</span>
+    <span class="n">LatePaymentBucket</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">TotalPastDue</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Late_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Late_labels</span><span class="p">)</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationBucketLateBucket"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationBucket"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="o">+</span> <span class="s2">"_"</span> <span class="o">+</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentBucket"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+        <span class="n">UtilizationBucket</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="o">+</span> <span class="s2">"_"</span> <span class="o">+</span> <span class="n">LatePaymentBucket</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
     <span class="p">)</span>
 
     <span class="n">engineered_cols</span> <span class="o">=</span> <span class="p">[</span>
-        <span class="s2">"TotalPastDue_Squared"</span><span class="p">,</span>
-        <span class="s2">"NormalizedUtilization"</span><span class="p">,</span>
+        <span class="s2">"DelinquencyScore"</span><span class="p">,</span>
         <span class="s2">"HasAnyDelinquency"</span><span class="p">,</span>
         <span class="s2">"HasMajorDelinquency"</span><span class="p">,</span>
-        <span class="s2">"SevereDelinquency"</span><span class="p">,</span>
         <span class="s2">"UtilizationPerAge"</span><span class="p">,</span>
-        <span class="s2">"LatePaymentsPerAge"</span><span class="p">,</span>
         <span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">,</span>
-        <span class="s2">"90DaysLate_Squared"</span><span class="p">,</span>
-        <span class="s2">"IncomePerCreditLineHasDelinquencies"</span><span class="p">,</span>
         <span class="s2">"IncomePerCreditLine"</span><span class="p">,</span>
-        <span class="s2">"DebtToIncome"</span><span class="p">,</span>
         <span class="s2">"DebtToIncomeAgeRisk"</span><span class="p">,</span>
-        <span class="s2">"AgeBucket"</span><span class="p">,</span>
+        <span class="s2">"AgeRisk"</span><span class="p">,</span>
         <span class="s2">"DelinquencyBucket"</span><span class="p">,</span>
-        <span class="s2">"UtilizationBucket"</span><span class="p">,</span>
-        <span class="s2">"LatePaymentBucket"</span><span class="p">,</span>
         <span class="s2">"UtilizationBucketLateBucket"</span>
     <span class="p">]</span>
 
     <span class="n">engineered_df</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="n">engineered_cols</span><span class="p">]</span>
 
-    <span class="k">return</span> <span class="n">engineered_df</span> 
+    <span class="k">return</span> <span class="n">engineered_df</span>
 
 <span class="k">class</span><span class="w"> </span><span class="nc">NN</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_numeric</span><span class="p">,</span> <span class="n">cat_dims</span><span class="p">,</span> <span class="n">emb_dims</span><span class="p">):</span>
