@@ -36,7 +36,7 @@ lr = 1e-3
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 5
+num_runs = 2
 max_patience = 13
 
 # pd 
@@ -165,6 +165,8 @@ def engineer_features(df):
 
     df_e = df.copy()
 
+    df_e["age"] = pd.to_numeric(df_e["age"], errors='coerce')
+
     NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0).clip(upper=10)
     NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0).clip(upper=10)
     NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0).clip(upper=10)
@@ -175,9 +177,8 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
+    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
     RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
-    RevolvingUtilizationOfUnsecuredLines = RevolvingUtilizationOfUnsecuredLines.replace(0, np.nan)
 
     AgeSafe = df_e["age"].replace(0, np.nan)
 
@@ -267,8 +268,8 @@ def engineer_features(df):
 
     engineered_df = df_e[engineered_cols]
 
-    print(f"Engineered {len(engineered_cols)} features")
-    print(f"Engineered cols: {engineered_cols}")
+    print(f"Engineered {len(engineered_df)} features")
+    print(f"Engineered cols: {list(engineered_df.columns)}")
 
     return engineered_df
 
@@ -595,13 +596,13 @@ def find_best_param(X_train, y_train):
 
     return search.best_params_
 
-def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
+def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2, return_details=False):
 
-    y_true = np.asarray(y_true)
-    y_probs = np.asarray(y_probs)
-    thresholds = np.asarray(thresholds)
+    y_true = np.asarray(y_true).astype(int)
+    y_probs = np.asarray(y_probs).astype(float)
+    thresholds = np.asarray(thresholds).astype(float)
 
-    preds = y_probs[:, None] > thresholds[None, :] 
+    preds = y_probs[:, None] > thresholds[None, :]
 
     TP = (preds & (y_true[:, None] == 1)).sum(axis=0)
     FP = (preds & (y_true[:, None] == 0)).sum(axis=0)
@@ -613,6 +614,8 @@ def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2):
     beta_sq = beta ** 2
     f_beta = (1 + beta_sq) * (precision * recall) / (beta_sq * precision + recall + 1e-8)
 
+    if return_details:
+        return f_beta, precision, recall
     return f_beta
 
 
@@ -634,6 +637,13 @@ dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 # In[5]:
 
 
+# Drop duplicates
+df_train = check_and_drop_duplicates(df_train)
+
+
+# In[6]:
+
+
 # Outlier Handling
 numeric_df = df_train.select_dtypes(include=['number'])
 
@@ -646,14 +656,14 @@ df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 df_filtered = outlier_handling(
     df_train,
     target_col="SeriousDlqin2yrs",
-    n_high=22, 
-    n_low=9
+    n_high=130, 
+    n_low=30
 )
 
 df_filtered.describe()
 
 
-# In[6]:
+# In[7]:
 
 
 # Select targets
@@ -661,14 +671,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[7]:
+# In[8]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[8]:
+# In[9]:
 
 
 # Split train/test
@@ -680,13 +690,6 @@ X_train_full, X_test, y_train_full, y_test = train_test_split(
 X_train, X_val, y_train, y_val = train_test_split(
     X_train_full, y_train_full, test_size=0.2, stratify=y_train_full, random_state=42
 )
-
-
-# In[9]:
-
-
-# Drop duplicates
-X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
 # In[10]:
@@ -773,11 +776,18 @@ X_test, X_test_flags = transform_val_test(
 # In[17]:
 
 
+# Drop duplicates
+X_train, y_train = check_and_drop_duplicates(X_train, y_train)
+
+
+# In[18]:
+
+
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[18]:
+# In[19]:
 
 
 # Zero importance cols 
@@ -810,7 +820,7 @@ X_val_flags   = flags_to_keep
 X_test_flags  = flags_to_keep
 
 
-# In[19]:
+# In[20]:
 
 
 # Encode
@@ -825,7 +835,7 @@ for col in cat_col_order:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[20]:
+# In[21]:
 
 
 # Cast to float32 and int64
@@ -838,7 +848,7 @@ X_val_cat   = X_val[cat_col_order].astype('int64').values
 X_test_cat  = X_test[cat_col_order].astype('int64').values
 
 
-# In[21]:
+# In[22]:
 
 
 # Convert to tensors
@@ -864,7 +874,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[22]:
+# In[23]:
 
 
 # Datasets
@@ -891,7 +901,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[23]:
+# In[24]:
 
 
 # Model
@@ -966,7 +976,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[24]:
+# In[25]:
 
 
 # Loss
@@ -993,7 +1003,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[25]:
+# In[26]:
 
 
 # Train
@@ -1082,7 +1092,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[26]:
+# In[39]:
 
 
 # Evaluation
@@ -1100,7 +1110,7 @@ y_val_probs = np.array(y_val_probs)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2)
+f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2.15)
 best_thresh_a = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
@@ -1138,7 +1148,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[27]:
+# In[28]:
 
 
 # Cast to float32 
@@ -1147,13 +1157,13 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[28]:
+# In[29]:
 
 
 best_param = find_best_param(X_train, y_train)
 
 
-# In[29]:
+# In[30]:
 
 
 # Model
@@ -1169,14 +1179,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[30]:
+# In[31]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[31]:
+# In[48]:
 
 
 # Evaluation
@@ -1184,7 +1194,7 @@ y_probs = model_b.predict_proba(X_test)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2)
+f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2.26)
 best_thresh_b = thresholds[np.argmax(f_beta_scores)]
 
 y_pred = (y_probs > best_thresh_b).astype(int)
@@ -1213,7 +1223,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[32]:
+# In[33]:
 
 
 # Importance XGB
@@ -1231,60 +1241,79 @@ importance_df = (
 print(importance_df)
 
 
-# In[33]:
+# In[34]:
 
 
 # Importance NN
 model_cpu = copy.deepcopy(model).cpu()
+model_cpu.eval()
 
 def shap_cpu(X):
-    X_num = X[:, :X_train_num_tensor.shape[1]]
-    X_cat = X[:, X_train_num_tensor.shape[1]:].astype(int)
+    """Wrapper that splits combined input into numeric & categorical parts before feeding to model."""
+    n_num = X_train_num_tensor.shape[1]
+    n_cat = X_train_cat_tensor.shape[1]
+
+    X_num = X[:, :n_num].astype(np.float32)
+    X_cat = X[:, n_num:n_num + n_cat].astype(np.int64)
 
     X_num_tensor = torch.tensor(X_num, dtype=torch.float32)
     X_cat_tensor = torch.tensor(X_cat, dtype=torch.long)
 
-    model_cpu.eval()
     with torch.no_grad():
         logits = model_cpu(X_num_tensor, X_cat_tensor)
         probs = torch.sigmoid(logits).numpy()
+
     return probs
 
-X_train_combined = np.hstack([X_train_num_tensor.numpy(), X_train_cat_tensor.numpy()])
-X_val_combined = np.hstack([X_val_num_tensor.numpy(), X_val_cat_tensor.numpy()])
-background_full = X_train_combined  
-background = shap.sample(background_full, 100)
-explainer = shap.KernelExplainer(shap_cpu, background)
-X_val_sample = X_val_combined[:500]
-shap_values = explainer.shap_values(X_val_sample)
-feature_names = list(num_col_order) + list(cat_col_order) + list(X_train_flags)
+X_train_combined = np.hstack([
+    X_train_num_tensor.numpy(),
+    X_train_cat_tensor.numpy()
+])
 
-shap_values_array = np.array(shap_values)  
+X_val_combined = np.hstack([
+    X_val_num_tensor.numpy(),
+    X_val_cat_tensor.numpy()
+])
+
+background = shap.sample(X_train_combined, 100, random_state=42)
+X_val_sample = X_val_combined[:500]
+
+explainer = shap.KernelExplainer(shap_cpu, background)
+
+shap_values = explainer.shap_values(X_val_sample)
+
+feature_names = (
+    list(num_col_order) +
+    list(cat_col_order) +
+    list(X_train_flags)
+)
+
+shap_values_array = np.array(shap_values)
 mean_abs_shap = np.abs(shap_values_array).mean(axis=0)
+
 shap_importance = pd.DataFrame({
     "feature": feature_names,
     "mean_abs_shap": mean_abs_shap
-})
+}).sort_values(by="mean_abs_shap", ascending=False)
 
-shap_importance = shap_importance.sort_values(by="mean_abs_shap", ascending=False)
 print(shap_importance)
 
 
-# In[34]:
+# In[49]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[35]:
+# In[50]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[36]:
+# In[51]:
 
 
 # Save for hosting

@@ -13,6 +13,8 @@ def engineer_features(df):
     
     df_e = df.copy()
 
+    df_e["age"] = pd.to_numeric(df_e["age"], errors='coerce')
+
     NumberOfTime3059DaysPastDueNotWorse = df_e["NumberOfTime30-59DaysPastDueNotWorse"].fillna(0).clip(upper=10)
     NumberOfTimes90DaysLate = df_e["NumberOfTimes90DaysLate"].fillna(0).clip(upper=10)
     NumberOfTime6089DaysPastDueNotWorse = df_e["NumberOfTime60-89DaysPastDueNotWorse"].fillna(0).clip(upper=10)
@@ -25,9 +27,8 @@ def engineer_features(df):
 
     RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
     RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
+    AgeSafe = df_e["age"].replace(0, np.nan)
 
-    AgeSafe = df_e["age"].fillna(0.0).replace(0, np.nan)
-    
     MonthlyIncomeSafe = df_e["MonthlyIncome"]
 
     DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
@@ -114,7 +115,7 @@ def engineer_features(df):
 
     engineered_df = df_e[engineered_cols]
 
-    return engineered_df
+    return engineered_df 
 
 class NN(nn.Module):
     def __init__(self, num_numeric, cat_dims, emb_dims):
