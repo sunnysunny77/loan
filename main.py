@@ -47,7 +47,11 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
 
+    UtilizationPerAge = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+
+    df_e["RevolvingUtilizationCappedLog"] = np.log1p(RevolvingUtilizationOfUnsecuredLines.clip(upper=5.0))
     
     df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
@@ -56,12 +60,15 @@ def engineer_features(df):
         (NumberOfTimes90DaysLate > 0)
     ).astype(int)
 
-    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+    df_e["UtilizationPerAge"] = UtilizationPerAge
+    df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
+    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationOfUnsecuredLines / CreditLinesSafe
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
-    df_e["AgeRisk"] = AgeRisk
+
+    df_e["HighAgeRiskFlag"] = (AgeRisk <= 0.4).astype(int)
 
     DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
     DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
@@ -87,9 +94,12 @@ def engineer_features(df):
         "LatePaymentsPerCreditLine",
         "IncomePerCreditLine",
         "DebtToIncomeAgeRisk",
-        "AgeRisk",
         "DelinquencyBucket",
-        "UtilizationBucketLateBucket"
+        "UtilizationBucketLateBucket",
+        "UtilizationPerCreditLine",
+        "UtilizationTimesDelinquency",
+        "HighAgeRiskFlag",
+        "RevolvingUtilizationCappedLog"
     ]
 
     engineered_df = df_e[engineered_cols]

@@ -46,7 +46,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[43]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
@@ -199,7 +199,11 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
 
+    UtilizationPerAge = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+
+    df_e["RevolvingUtilizationCappedLog"] = np.log1p(RevolvingUtilizationOfUnsecuredLines.clip(upper=5.0))
 
     df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
@@ -208,12 +212,15 @@ def engineer_features(df):
         (NumberOfTimes90DaysLate > 0)
     ).astype(int)
 
-    df_e["UtilizationPerAge"] = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+    df_e["UtilizationPerAge"] = UtilizationPerAge
+    df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
+    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationOfUnsecuredLines / CreditLinesSafe
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
-    df_e["AgeRisk"] = AgeRisk
+
+    df_e["HighAgeRiskFlag"] = (AgeRisk <= 0.4).astype(int)
 
     DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
     DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
@@ -239,9 +246,12 @@ def engineer_features(df):
         "LatePaymentsPerCreditLine",
         "IncomePerCreditLine",
         "DebtToIncomeAgeRisk",
-        "AgeRisk",
         "DelinquencyBucket",
-        "UtilizationBucketLateBucket"
+        "UtilizationBucketLateBucket",
+        "UtilizationPerCreditLine",
+        "UtilizationTimesDelinquency",
+        "HighAgeRiskFlag",
+        "RevolvingUtilizationCappedLog"
     ]
 
     engineered_df = df_e[engineered_cols]
@@ -702,7 +712,7 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14, bias_mode=None)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=15, bias_mode=None)
 
 
 # In[15]:
@@ -765,16 +775,17 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 dataset_summary(X_train, y_train)
 
 
-# In[19]:
+# In[20]:
 
 
 # Zero importance cols 
 zero_importance_cols = [
-    "WasHasAnyDelinquencyImputed", 
-    "WasUtilizationPerAgeImputed", 
-    "WasHasMajorDelinquencyImputed", 
-    "WasDebtToIncomeAgeRiskImputed", 
-    "WasDelinquencyBucketImputed", 
+    "WasDelinquencyScoreImputed",
+    "WasHasMajorDelinquencyImputed",
+    "WasHasAnyDelinquencyImputed",
+    "WasDebtToIncomeAgeRiskImputed",
+    "WasHighAgeRiskFlagImputed",
+    "WasDelinquencyBucketImputed",
     "WasUtilizationBucketLateBucketImputed"
 ]
 
@@ -789,7 +800,7 @@ X_val_flags   = flags_to_keep
 X_test_flags  = flags_to_keep
 
 
-# In[20]:
+# In[21]:
 
 
 # Encode
@@ -804,7 +815,7 @@ for col in cat_col_order:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[21]:
+# In[22]:
 
 
 # Cast to float32 and int64
@@ -817,7 +828,7 @@ X_val_cat   = X_val[cat_col_order].astype('int64').values
 X_test_cat  = X_test[cat_col_order].astype('int64').values
 
 
-# In[22]:
+# In[23]:
 
 
 # Convert to tensors
@@ -843,7 +854,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[24]:
 
 
 # Datasets
@@ -870,7 +881,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[25]:
 
 
 # Model
@@ -945,7 +956,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[26]:
 
 
 # Loss
@@ -972,7 +983,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=2)
 
 
-# In[26]:
+# In[27]:
 
 
 # Train
@@ -1061,7 +1072,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[27]:
+# In[44]:
 
 
 # Evaluation
@@ -1079,7 +1090,7 @@ y_val_probs = np.array(y_val_probs)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2.3)
+f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2.4)
 best_thresh_a = thresholds[np.argmax(f_beta_scores)]
 
 y_test_probs = []
@@ -1117,7 +1128,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[28]:
+# In[29]:
 
 
 # Cast to float32 
@@ -1126,13 +1137,13 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[44]:
+# In[30]:
 
 
 best_param = find_best_param(X_train, y_train)
 
 
-# In[46]:
+# In[31]:
 
 
 # Model
@@ -1148,14 +1159,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[47]:
+# In[32]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[49]:
+# In[39]:
 
 
 # Evaluation
@@ -1163,7 +1174,7 @@ y_probs = model_b.predict_proba(X_test)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2.6)
+f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2.4)
 best_thresh_b = thresholds[np.argmax(f_beta_scores)]
 
 y_pred = (y_probs > best_thresh_b).astype(int)
@@ -1192,7 +1203,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[50]:
+# In[34]:
 
 
 # Importance XGB
@@ -1210,7 +1221,7 @@ importance_df = (
 print(importance_df)
 
 
-# In[34]:
+# In[35]:
 
 
 # Importance NN
@@ -1218,7 +1229,6 @@ model_cpu = copy.deepcopy(model).cpu()
 model_cpu.eval()
 
 def shap_cpu(X):
-    """Wrapper that splits combined input into numeric & categorical parts before feeding to model."""
     n_num = X_train_num_tensor.shape[1]
     n_cat = X_train_cat_tensor.shape[1]
 
@@ -1268,21 +1278,21 @@ shap_importance = pd.DataFrame({
 print(shap_importance)
 
 
-# In[51]:
+# In[45]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[52]:
+# In[46]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[53]:
+# In[47]:
 
 
 # Save for hosting

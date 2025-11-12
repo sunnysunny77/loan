@@ -7567,7 +7567,11 @@ a.anchor-link {
         <span class="n">NumberOfTimes90DaysLate</span> <span class="o">*</span> <span class="mi">3</span>
     <span class="p">)</span>
 
+    <span class="n">UtilizationPerAge</span> <span class="o">=</span> <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">/</span> <span class="n">AgeSafe</span>
+
     <span class="n">HasAnyDelinquency</span> <span class="o">=</span> <span class="p">(</span><span class="n">TotalPastDue</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationCappedLog"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">RevolvingUtilizationOfUnsecuredLines</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">5.0</span><span class="p">))</span>
     
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScore</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"HasAnyDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">HasAnyDelinquency</span>
@@ -7576,12 +7580,15 @@ a.anchor-link {
         <span class="p">(</span><span class="n">NumberOfTimes90DaysLate</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
     <span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">/</span> <span class="n">AgeSafe</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">UtilizationPerAge</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationTimesDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">UtilizationPerAge</span> <span class="o">*</span> <span class="n">HasAnyDelinquency</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDue</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationOfUnsecuredLines</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">IncomePerCreditLine</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtToIncomeAgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtToIncome</span> <span class="o">*</span> <span class="n">AgeRisk</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"AgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">AgeRisk</span>
+
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"HighAgeRiskFlag"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">AgeRisk</span> <span class="o">&lt;=</span> <span class="mf">0.4</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
     <span class="n">DelinquencyScore_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">]</span>
     <span class="n">DelinquencyScore_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"None"</span><span class="p">,</span> <span class="s2">"Few"</span><span class="p">,</span> <span class="s2">"Moderate"</span><span class="p">,</span> <span class="s2">"Frequent"</span><span class="p">,</span> <span class="s2">"Chronic"</span><span class="p">]</span>
@@ -7607,9 +7614,12 @@ a.anchor-link {
         <span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">,</span>
         <span class="s2">"IncomePerCreditLine"</span><span class="p">,</span>
         <span class="s2">"DebtToIncomeAgeRisk"</span><span class="p">,</span>
-        <span class="s2">"AgeRisk"</span><span class="p">,</span>
         <span class="s2">"DelinquencyBucket"</span><span class="p">,</span>
-        <span class="s2">"UtilizationBucketLateBucket"</span>
+        <span class="s2">"UtilizationBucketLateBucket"</span><span class="p">,</span>
+        <span class="s2">"UtilizationPerCreditLine"</span><span class="p">,</span>
+        <span class="s2">"UtilizationTimesDelinquency"</span><span class="p">,</span>
+        <span class="s2">"HighAgeRiskFlag"</span><span class="p">,</span>
+        <span class="s2">"RevolvingUtilizationCappedLog"</span>
     <span class="p">]</span>
 
     <span class="n">engineered_df</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="n">engineered_cols</span><span class="p">]</span>
