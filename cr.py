@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[203]:
 
 
 # Imports
@@ -25,7 +25,6 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.model_selection import RandomizedSearchCV
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,7 +45,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[2]:
+# In[288]:
 
 
 def load_datasets(base_path="./"):
@@ -332,50 +331,6 @@ def collapse_rare_categories(df, threshold=0.005):
 
     return df_copy, rare_maps
 
-def find_best_param(X_train, y_train):
-
-    neg_count = sum(y_train == 0)
-    pos_count = sum(y_train == 1)
-
-    base_scale_pos_weight = neg_count / pos_count
-
-    param_grid = {
-        "max_depth": [4, 5, 6, 7, 8],
-        "min_child_weight": [1, 3, 5, 7],
-        "gamma": [0, 0.2, 0.5, 1.0],
-        "subsample": [0.6, 0.7, 0.8, 0.9],
-        "colsample_bytree": [0.6, 0.7, 0.8, 0.9],
-        "reg_alpha": [0, 0.05, 0.1, 0.3],
-        "reg_lambda": [0.5, 0.8, 1.0, 1.2],
-        "learning_rate": [0.01, 0.03, 0.05],
-        "scale_pos_weight": [base_scale_pos_weight * m for m in [1.0, 1.5, 2.0, 2.5, 3.0]]
-    }
-
-    xgb_clf = xgb.XGBClassifier(
-        objective="binary:logistic",
-        n_estimators=800,
-        random_state=42,
-        n_jobs=-1,
-    )
-
-    f2_scorer = make_scorer(fbeta_score, beta=2)
-
-    search = RandomizedSearchCV(
-        xgb_clf,
-        param_distributions=param_grid,
-        n_iter=30,  
-        scoring=f2_scorer,
-        cv=3,      
-        verbose=1,
-        random_state=42
-    )
-
-    search.fit(X_train, y_train)
-
-    print("Best params:", search.best_params_)
-
-    return search.best_params_
-
 def select_features(df, target, n_to_keep=10):
 
     df_temp = df.copy()
@@ -397,37 +352,25 @@ def select_features(df, target, n_to_keep=10):
 
     X_train = X_train.astype(np.float32)
 
-    neg_count = (y_train == 0).sum()
-    pos_count = (y_train == 1).sum()
-
-    best_param = {
-        'subsample': 0.6,
-        'scale_pos_weight':
-        14.090657712818487,
-        'reg_lambda': 0.8,
-        'reg_alpha': 0.1,
-        'min_child_weight': 5,
-        'max_depth': 4,
-        'learning_rate': 0.03,
-        'gamma': 1.0,
-        'colsample_bytree': 0.6
+    params = {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "scale_pos_weight": sum(y_train==0)/sum(y_train==1),
+        "learning_rate": 0.02,
+        "max_depth": 4,
+        "n_estimators": 1000,
+        "random_state": 42,
+        "n_jobs": -1,
     }
 
     model = xgb.XGBClassifier(
         **best_param,
-        objective="binary:logistic",
-        eval_metric=["auc"],
-        n_estimators=800,
-        random_state=42,
-        n_jobs=-1,
-        verbosity=0,
     )
 
     model.fit(X_train, y_train, verbose=False)
 
-    all_features = model.get_booster().feature_names
     importance_dict = model.get_booster().get_score(importance_type="gain")
-    full_importance = {feat: importance_dict.get(feat, 0.0) for feat in all_features}
+    full_importance = {feat: importance_dict.get(feat, 0.0) for feat in X_train.columns}
 
     importance_df = (
         pd.DataFrame({
@@ -439,15 +382,18 @@ def select_features(df, target, n_to_keep=10):
     )
 
     top_features = importance_df["Feature"].head(n_to_keep).tolist()
-    dropped_features = [f for f in feature_cols if f not in top_features]
 
-    print(f"Kept {len(top_features)} select features")
+    final_features = list(set(top_features + cat_cols))
+
+    dropped_features = [f for f in df_temp.columns if f not in final_features]
+
+    print(f"Kept {len(final_features)} features (including categorical columns)")
     print(f"Dropped {len(dropped_features)} features")
     if dropped_features:
         print(f"Dropped cols: {dropped_features}")
     print(importance_df)
 
-    return df_temp[top_features].copy(), dropped_features
+    return df_temp[final_features].copy(), dropped_features
 
 def impute_and_scale(df):
 
@@ -560,6 +506,7 @@ def check_and_drop_duplicates(df, target=None):
     target_cleaned = target_cleaned[mask].reset_index(drop=True)
 
     print(f"Dropped: {count} duplicates")
+
     return df_cleaned, target_cleaned
 
 def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
@@ -569,17 +516,16 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     thresholds = np.asarray(thresholds).astype(float)
 
     preds = y_probs[:, None] > thresholds[None, :]
-
     TP = (preds & (y_true[:, None] == 1)).sum(axis=0)
     FN = ((~preds) & (y_true[:, None] == 1)).sum(axis=0)
 
     recall = TP / (TP + FN + 1e-8)
-
     closest_idx = np.argmin(np.abs(recall - target_recall))
+
     return thresholds[closest_idx]
 
 
-# In[3]:
+# In[289]:
 
 
 # Load datasets
@@ -587,21 +533,21 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[290]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[5]:
+# In[291]:
 
 
 # Drop duplicates
 df_train = check_and_drop_duplicates(df_train)
 
 
-# In[6]:
+# In[292]:
 
 
 # Outlier Handling
@@ -623,7 +569,7 @@ df_filtered = outlier_handling(
 df_filtered.describe()
 
 
-# In[7]:
+# In[293]:
 
 
 # Select targets
@@ -631,14 +577,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[8]:
+# In[294]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[9]:
+# In[295]:
 
 
 # Split train/test
@@ -652,42 +598,42 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[10]:
+# In[296]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[11]:
+# In[297]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[12]:
+# In[298]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[13]:
+# In[299]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[14]:
+# In[300]:
 
 
 # Feature selection
 df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
 
 
-# In[15]:
+# In[217]:
 
 
 # Impute and scale
@@ -696,7 +642,7 @@ X_train, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, ske
 )
 
 
-# In[16]:
+# In[218]:
 
 
 # Process
@@ -733,21 +679,21 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[17]:
+# In[219]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[18]:
+# In[220]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[19]:
+# In[221]:
 
 
 # Zero importance cols entered after running
@@ -779,7 +725,7 @@ X_val_flags = flags_to_keep
 X_test_flags = flags_to_keep
 
 
-# In[20]:
+# In[172]:
 
 
 # Encode
@@ -816,7 +762,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[21]:
+# In[173]:
 
 
 # Cast
@@ -940,7 +886,7 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=2.5)
+loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
 # In[26]:
@@ -1029,7 +975,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[38]:
+# In[88]:
 
 
 # Evaluation
@@ -1045,7 +991,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, target_recall=0.71)
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.70)
 
 y_test_probs = []
 with torch.no_grad():
@@ -1066,7 +1012,7 @@ cm = confusion_matrix(y_test, y_test_pred_opt)
 tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 
-print("Best threshold for F-beta (β=2):", best_thresh_a)
+print("Best threshold:", best_thresh_a)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -1082,36 +1028,41 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[28]:
-
-
-best_param = find_best_param(X_train, y_train)
-
-
-# In[29]:
+# In[200]:
 
 
 # Model
+best_param = {
+    "objective": "binary:logistic",
+    "eval_metric": "auc",
+    "scale_pos_weight": sum(y_train==0)/sum(y_train==1),
+    "learning_rate": 0.02,
+    "max_depth": 4,
+    "min_child_weight": 5,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "gamma": 1,
+    "reg_alpha": 1,
+    "reg_lambda": 2,
+    "n_estimators": 1000,
+    "random_state": 42,
+    "n_jobs": -1,
+}
+
 model_b = xgb.XGBClassifier(
     **best_param,
-    objective="binary:logistic",
-    eval_metric=["auc"],
-    n_estimators=800,
-    random_state=42,
-    n_jobs=-1,
-    verbosity=1,
     early_stopping_rounds=100,
 )
 
 
-# In[30]:
+# In[201]:
 
 
 # Train
 model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
 
 
-# In[39]:
+# In[202]:
 
 
 # Evaluation
@@ -1119,8 +1070,7 @@ y_probs = model_b.predict_proba(X_test_xgb)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, target_recall=0.72)
-
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.72)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -1131,7 +1081,7 @@ tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 roc_auc = roc_auc_score(y_test, y_probs)
 
-print("Best threshold for F1:", best_thresh_b)
+print("Best threshold:", best_thresh_b)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -1147,7 +1097,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[32]:
+# In[301]:
 
 
 # Importance XGB
@@ -1198,24 +1148,25 @@ print("SHAP Importance:")
 print(shap_importance)
 
 
-# In[40]:
+# In[302]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[41]:
+# In[303]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[42]:
+# In[304]:
 
 
 # Save for hosting
+joblib.dump(X_train_xgb.columns.tolist(), "xgb_col_order.pkl")
 joblib.dump(X_train_nn_full.columns.tolist(), "nn_col_order.pkl")
 joblib.dump(best_thresh_a, "threshold_a.pkl")
 joblib.dump(best_thresh_b, "threshold_b.pkl")
@@ -1226,7 +1177,6 @@ joblib.dump(std_scaler, "std_scaler.pkl")
 joblib.dump(num_col_order, "num_col_order.pkl")
 joblib.dump(cat_maps, "cat_maps.pkl")
 joblib.dump(cat_col_order, "cat_col_order.pkl")
-joblib.dump(X_train_flags, "X_train_flags.pkl")
 joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
 

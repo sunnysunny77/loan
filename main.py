@@ -152,6 +152,7 @@ class NN(nn.Module):
 
 model_b = xgb.XGBClassifier()
 model_b.load_model("cr_b.json")
+xgb_col_order = joblib.load("xgb_col_order.pkl")
 nn_col_order = joblib.load("nn_col_order.pkl")
 num_imputer = joblib.load("num_imputer.pkl")
 cat_imputer = joblib.load("cat_imputer.pkl")
@@ -159,7 +160,6 @@ robust_scaler = joblib.load("robust_scaler.pkl")
 std_scaler = joblib.load("std_scaler.pkl")
 cat_maps = joblib.load("cat_maps.pkl")
 cat_col_order = joblib.load("cat_col_order.pkl")
-X_train_flags = joblib.load("X_train_flags.pkl")
 num_col_order = joblib.load("num_col_order.pkl")
 skewed_col_order = joblib.load("skewed_col_order.pkl")
 threshold_a = joblib.load("threshold_a.pkl")
@@ -216,11 +216,13 @@ def preprocess(df: pd.DataFrame, for_xgb: bool = False):
 
     if for_xgb:
         for col in cat_col_order:
-            df_copy[col] = df_copy[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-        imputation_flags = [f for f in X_train_flags if f in df_copy.columns]
-        df_final = df_copy[num_col_order + imputation_flags + cat_col_order].astype(np.float32)
-        trained_features = model_b.get_booster().feature_names
-        df_final = df_final.reindex(columns=trained_features, fill_value=0.0)
+            df_copy[col] = (
+                df_copy[col].astype(str)
+                .map(cat_maps.get(col, {}))
+                .fillna(0)
+                .astype(int)
+            )
+        df_final = df_copy.reindex(columns=xgb_col_order, fill_value=0.0).astype(np.float32)
         return df_final
     else: 
         df_copy = df_copy.reindex(columns=nn_col_order, fill_value=0.0)
