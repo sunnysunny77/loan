@@ -7542,6 +7542,7 @@ a.anchor-link {
         <span class="o">+</span> <span class="n">NumberOfTimes90DaysLate</span>
         <span class="o">+</span> <span class="n">NumberOfTime6089DaysPastDueNotWorse</span>
     <span class="p">)</span>
+    <span class="n">TotalPastDueCapped</span> <span class="o">=</span> <span class="n">TotalPastDue</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
 
     <span class="n">RevolvingUtilizationCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
     <span class="n">RevolvingUtilizationCappedLog</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">RevolvingUtilizationCapped</span><span class="p">)</span>
@@ -7572,6 +7573,7 @@ a.anchor-link {
     <span class="n">HasAnyDelinquency</span> <span class="o">=</span> <span class="p">(</span><span class="n">TotalPastDue</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationCappedLog"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationCappedLog</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"TotalPastDueCapped"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDueCapped</span>
     
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScore</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"HasAnyDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">HasAnyDelinquency</span>
@@ -7607,6 +7609,7 @@ a.anchor-link {
     <span class="p">)</span>
 
     <span class="n">engineered_cols</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">"TotalPastDueCapped"</span><span class="p">,</span>
         <span class="s2">"DelinquencyScore"</span><span class="p">,</span>
         <span class="s2">"HasAnyDelinquency"</span><span class="p">,</span>
         <span class="s2">"HasMajorDelinquency"</span><span class="p">,</span>
