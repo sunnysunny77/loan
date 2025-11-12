@@ -23,8 +23,8 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
-    RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
+    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
+    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationCapped)
 
     AgeSafe = df_e["age"].replace(0, np.nan)
 
@@ -47,11 +47,11 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
 
-    UtilizationPerAge = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+    UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
 
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
 
-    df_e["RevolvingUtilizationCappedLog"] = np.log1p(RevolvingUtilizationOfUnsecuredLines.clip(upper=5.0))
+    df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
     
     df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
@@ -63,7 +63,7 @@ def engineer_features(df):
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
-    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationOfUnsecuredLines / CreditLinesSafe
+    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLog / CreditLinesSafe
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
@@ -76,7 +76,7 @@ def engineer_features(df):
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
+    UtilizationBucket = pd.cut(RevolvingUtilizationCapped, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]

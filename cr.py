@@ -175,8 +175,8 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    RevolvingUtilizationOfUnsecuredLinesCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
-    RevolvingUtilizationOfUnsecuredLines = np.log1p(RevolvingUtilizationOfUnsecuredLinesCapped)
+    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
+    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationCapped)
 
     AgeSafe = df_e["age"].replace(0, np.nan)
 
@@ -199,11 +199,11 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
 
-    UtilizationPerAge = RevolvingUtilizationOfUnsecuredLines / AgeSafe
+    UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
 
     HasAnyDelinquency = (TotalPastDue > 0).astype(int)
 
-    df_e["RevolvingUtilizationCappedLog"] = np.log1p(RevolvingUtilizationOfUnsecuredLines.clip(upper=5.0))
+    df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
 
     df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasAnyDelinquency"] = HasAnyDelinquency
@@ -215,7 +215,7 @@ def engineer_features(df):
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
-    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationOfUnsecuredLines / CreditLinesSafe
+    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLog / CreditLinesSafe
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
@@ -228,7 +228,7 @@ def engineer_features(df):
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    UtilizationBucket = pd.cut(RevolvingUtilizationOfUnsecuredLines, bins=Utilization_bins, labels=Utilization_labels)
+    UtilizationBucket = pd.cut(RevolvingUtilizationCapped, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
@@ -775,7 +775,7 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 dataset_summary(X_train, y_train)
 
 
-# In[20]:
+# In[19]:
 
 
 # Zero importance cols 
@@ -800,7 +800,7 @@ X_val_flags   = flags_to_keep
 X_test_flags  = flags_to_keep
 
 
-# In[21]:
+# In[20]:
 
 
 # Encode
@@ -815,7 +815,7 @@ for col in cat_col_order:
     X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[22]:
+# In[21]:
 
 
 # Cast to float32 and int64
@@ -828,7 +828,7 @@ X_val_cat   = X_val[cat_col_order].astype('int64').values
 X_test_cat  = X_test[cat_col_order].astype('int64').values
 
 
-# In[23]:
+# In[22]:
 
 
 # Convert to tensors
@@ -854,7 +854,7 @@ print("Categorical input shape:", X_train_cat_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[24]:
+# In[23]:
 
 
 # Datasets
@@ -881,7 +881,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[25]:
+# In[24]:
 
 
 # Model
@@ -956,7 +956,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[26]:
+# In[25]:
 
 
 # Loss
@@ -983,7 +983,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=2)
 
 
-# In[27]:
+# In[26]:
 
 
 # Train
@@ -1072,7 +1072,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[44]:
+# In[39]:
 
 
 # Evaluation
@@ -1128,7 +1128,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[29]:
+# In[28]:
 
 
 # Cast to float32 
@@ -1137,13 +1137,13 @@ X_val = X_val.astype(np.float32)
 X_test = X_test.astype(np.float32)
 
 
-# In[30]:
+# In[29]:
 
 
 best_param = find_best_param(X_train, y_train)
 
 
-# In[31]:
+# In[30]:
 
 
 # Model
@@ -1159,14 +1159,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[32]:
+# In[31]:
 
 
 # Train
 model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
 
 
-# In[39]:
+# In[32]:
 
 
 # Evaluation
@@ -1203,7 +1203,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[34]:
+# In[33]:
 
 
 # Importance XGB
@@ -1221,7 +1221,7 @@ importance_df = (
 print(importance_df)
 
 
-# In[35]:
+# In[34]:
 
 
 # Importance NN
@@ -1278,21 +1278,21 @@ shap_importance = pd.DataFrame({
 print(shap_importance)
 
 
-# In[45]:
+# In[40]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[46]:
+# In[41]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[47]:
+# In[42]:
 
 
 # Save for hosting
