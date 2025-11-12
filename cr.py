@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[40]:
+# In[1]:
 
 
 # Imports
@@ -17,7 +17,7 @@ import xgboost as xgb
 import copy
 import joblib
 import shap
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, precision_recall_curve, roc_auc_score,  make_scorer, fbeta_score
@@ -46,7 +46,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[41]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
@@ -332,68 +332,98 @@ def collapse_rare_categories(df, threshold=0.005):
 
     return df_copy, rare_maps
 
-def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
+def find_best_param(X_train, y_train):
+
+    neg_count = sum(y_train == 0)
+    pos_count = sum(y_train == 1)
+
+    base_scale_pos_weight = neg_count / pos_count
+
+    param_grid = {
+        "max_depth": [4, 5, 6, 7, 8],
+        "min_child_weight": [1, 3, 5, 7],
+        "gamma": [0, 0.2, 0.5, 1.0],
+        "subsample": [0.6, 0.7, 0.8, 0.9],
+        "colsample_bytree": [0.6, 0.7, 0.8, 0.9],
+        "reg_alpha": [0, 0.05, 0.1, 0.3],
+        "reg_lambda": [0.5, 0.8, 1.0, 1.2],
+        "learning_rate": [0.01, 0.03, 0.05],
+        "scale_pos_weight": [base_scale_pos_weight * m for m in [1.0, 1.5, 2.0, 2.5, 3.0]]
+    }
+
+    xgb_clf = xgb.XGBClassifier(
+        objective="binary:logistic",
+        n_estimators=800,
+        random_state=42,
+        n_jobs=-1,
+    )
+
+    f2_scorer = make_scorer(fbeta_score, beta=2)
+
+    search = RandomizedSearchCV(
+        xgb_clf,
+        param_distributions=param_grid,
+        n_iter=30,  
+        scoring=f2_scorer,
+        cv=3,      
+        verbose=0,
+        random_state=42
+    )
+
+    search.fit(X_train, y_train)
+
+    print("Best params:", search.best_params_)
+
+    return search.best_params_
+
+def select_features(df, target, n_to_keep=10):
 
     df_temp = df.copy()
 
     cat_cols = df_temp.select_dtypes(include=["object", "category"]).columns.tolist()
-
     df_model = df_temp.copy()
     for col in cat_cols:
         df_model[col] = df_model[col].astype("category").cat.codes
 
     feature_cols = df_model.columns.tolist()
 
-    X_train, X_val, y_train, y_val = train_test_split(
+    X_train, _, y_train, _ = train_test_split(
         df_model[feature_cols],
         target,
         test_size=0.2,
-        random_state=random_state,
+        random_state=42,
         stratify=target,
     )
 
     X_train = X_train.astype(np.float32)
-    X_val = X_val.astype(np.float32)
 
     neg_count = (y_train == 0).sum()
     pos_count = (y_train == 1).sum()
 
-    minority_class = 1 if pos_count < neg_count else 0
-    majority_class = 0 if minority_class == 1 else 1
-
-    if bias_mode is False:
-        scale_pos_weight = neg_count / max(1, pos_count)
-        print("Biasing toward minority class")
-    elif bias_mode is True:
-        scale_pos_weight = pos_count / max(1, neg_count)
-        print("Biasing toward majority class")
-    else:
-        scale_pos_weight = 1.0
-        print("Using normal class weights")
-
-    tuned_params = {
-        'subsample': 0.9, 
-        'reg_lambda': 0.5, 
-        'reg_alpha': 0.1, 
-        'min_child_weight': 7, 
-        'max_depth': 5, 
-        'learning_rate': 0.01, 
-        'gamma': 0.2, 
-        'colsample_bytree': 0.8
+    best_param = {
+        'subsample': 0.6,
+        'scale_pos_weight':
+        14.090657712818487,
+        'reg_lambda': 0.8,
+        'reg_alpha': 0.1,
+        'min_child_weight': 5,
+        'max_depth': 4,
+        'learning_rate': 0.03,
+        'gamma': 1.0,
+        'colsample_bytree': 0.6
     }
 
     model = xgb.XGBClassifier(
+        **best_param,
         objective="binary:logistic",
-        eval_metric="auc",
-        scale_pos_weight=scale_pos_weight,
+        eval_metric=["auc"],
         n_estimators=800,
-        random_state=random_state,
+        random_state=42,
         n_jobs=-1,
         verbosity=0,
-        **tuned_params
     )
 
-    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    model.fit(X_train, y_train, verbose=False)
 
     all_features = model.get_booster().feature_names
     importance_dict = model.get_booster().get_score(importance_type="gain")
@@ -408,18 +438,16 @@ def select_features(df, target, n_to_keep=10, random_state=42, bias_mode=None):
         .reset_index(drop=True)
     )
 
-    numeric_feats = [f for f in feature_cols if f not in cat_cols]
-    top_numeric = importance_df[importance_df["Feature"].isin(numeric_feats)]["Feature"].head(n_to_keep).tolist()
-    kept_features = top_numeric + cat_cols
-    dropped_features = [f for f in numeric_feats if f not in top_numeric]
+    top_features = importance_df["Feature"].head(n_to_keep).tolist()
+    dropped_features = [f for f in feature_cols if f not in top_features]
 
-    print(f"Kept {len(kept_features)} select features (including all {len(cat_cols)} categorical)")
-    print(f"Dropped:{len(dropped_features)} numeric select features cols")
+    print(f"Kept {len(top_features)} select features")
+    print(f"Dropped {len(dropped_features)} features")
     if dropped_features:
-        print(f"Dropped cols:{dropped_features}")
+        print(f"Dropped cols: {dropped_features}")
     print(importance_df)
 
-    return df_temp[kept_features].copy(), dropped_features
+    return df_temp[top_features].copy(), dropped_features
 
 def impute_and_scale(df):
 
@@ -516,78 +544,25 @@ def transform_val_test(
 
     return df_copy, imputed_flags
 
-def check_and_drop_duplicates(df, target=None, drop_target_na=False, show_info=True):
+def check_and_drop_duplicates(df, target=None):
 
-    df_cleaned = df.copy()
+    df_cleaned = df.drop_duplicates()
 
-    target_cleaned = None
+    count = df.duplicated().sum()
 
-    total_duplicates = df_cleaned.duplicated().sum()
-    if total_duplicates > 0:
-        df_cleaned = df_cleaned.drop_duplicates(keep='first')
-        if show_info:
-            print(f"Dropped {total_duplicates} duplicate rows. Remaining: {len(df_cleaned)}")
-
-    if target is not None:
-        target_cleaned = pd.Series(target).reindex(df_cleaned.index)
-        if drop_target_na:
-            mask = target_cleaned.notna()
-            dropped = len(target_cleaned) - mask.sum()
-            if dropped > 0 and show_info:
-                print(f"Dropped {dropped} rows with missing target values")
-            df_cleaned = df_cleaned.loc[mask].reset_index(drop=True)
-            target_cleaned = target_cleaned.loc[mask].reset_index(drop=True)
-        else:
-            target_cleaned = target_cleaned.reset_index(drop=True)
-        return df_cleaned, target_cleaned
-    else:
+    if target is None:
+        print(f"Dropped: {count} duplicates")
         return df_cleaned
 
-def find_best_param(X_train, y_train):
+    target_cleaned = pd.Series(target).reindex(df_cleaned.index)
+    mask = target_cleaned.notna()
+    df_cleaned = df_cleaned[mask].reset_index(drop=True)
+    target_cleaned = target_cleaned[mask].reset_index(drop=True)
 
-    neg_count = sum(y_train == 0)
-    pos_count = sum(y_train == 1)
+    print(f"Dropped: {count} duplicates")
+    return df_cleaned, target_cleaned
 
-    base_scale_pos_weight = neg_count / pos_count
-
-    param_grid = {
-        "max_depth": [4, 5, 6, 7, 8],
-        "min_child_weight": [1, 3, 5, 7],
-        "gamma": [0, 0.2, 0.5, 1.0],
-        "subsample": [0.6, 0.7, 0.8, 0.9],
-        "colsample_bytree": [0.6, 0.7, 0.8, 0.9],
-        "reg_alpha": [0, 0.05, 0.1, 0.3],
-        "reg_lambda": [0.5, 0.8, 1.0, 1.2],
-        "learning_rate": [0.01, 0.03, 0.05],
-        "scale_pos_weight": [base_scale_pos_weight * m for m in [1.0, 1.5, 2.0, 2.5, 3.0]]
-    }
-
-    xgb_clf = xgb.XGBClassifier(
-        objective="binary:logistic",
-        n_estimators=800,
-        random_state=42,
-        n_jobs=-1,
-    )
-
-    f2_scorer = make_scorer(fbeta_score, beta=2)
-
-    search = RandomizedSearchCV(
-        xgb_clf,
-        param_distributions=param_grid,
-        n_iter=30,  
-        scoring=f2_scorer,
-        cv=3,      
-        verbose=2,
-        random_state=42
-    )
-
-    search.fit(X_train, y_train)
-
-    print("Best params:", search.best_params_)
-
-    return search.best_params_
-
-def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2, return_details=False):
+def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
 
     y_true = np.asarray(y_true).astype(int)
     y_probs = np.asarray(y_probs).astype(float)
@@ -596,21 +571,15 @@ def fast_fbeta_scores(y_true, y_probs, thresholds, beta=2, return_details=False)
     preds = y_probs[:, None] > thresholds[None, :]
 
     TP = (preds & (y_true[:, None] == 1)).sum(axis=0)
-    FP = (preds & (y_true[:, None] == 0)).sum(axis=0)
     FN = ((~preds) & (y_true[:, None] == 1)).sum(axis=0)
 
-    precision = TP / (TP + FP + 1e-8)
     recall = TP / (TP + FN + 1e-8)
 
-    beta_sq = beta ** 2
-    f_beta = (1 + beta_sq) * (precision * recall) / (beta_sq * precision + recall + 1e-8)
-
-    if return_details:
-        return f_beta, precision, recall
-    return f_beta
+    closest_idx = np.argmin(np.abs(recall - target_recall))
+    return thresholds[closest_idx]
 
 
-# In[42]:
+# In[3]:
 
 
 # Load datasets
@@ -618,21 +587,21 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[43]:
+# In[4]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[44]:
+# In[5]:
 
 
 # Drop duplicates
 df_train = check_and_drop_duplicates(df_train)
 
 
-# In[45]:
+# In[6]:
 
 
 # Outlier Handling
@@ -654,7 +623,7 @@ df_filtered = outlier_handling(
 df_filtered.describe()
 
 
-# In[46]:
+# In[7]:
 
 
 # Select targets
@@ -662,14 +631,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[47]:
+# In[8]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[48]:
+# In[9]:
 
 
 # Split train/test
@@ -683,42 +652,42 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[49]:
+# In[10]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[50]:
+# In[11]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[51]:
+# In[12]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[52]:
+# In[13]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[53]:
+# In[14]:
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=15, bias_mode=None)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
 
 
-# In[54]:
+# In[15]:
 
 
 # Impute and scale
@@ -727,7 +696,7 @@ X_train, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, ske
 )
 
 
-# In[55]:
+# In[16]:
 
 
 # Process
@@ -764,145 +733,149 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[56]:
+# In[17]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[57]:
+# In[18]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[58]:
+# In[19]:
 
 
 # Zero importance cols entered after running
 zero_importance_cols = [
-    "WasDelinquencyScoreImputed",
-    "WasHasMajorDelinquencyImputed",
-    "WasHasAnyDelinquencyImputed",
     "WasDebtToIncomeAgeRiskImputed",
-    "WasHighAgeRiskFlagImputed",
     "WasDelinquencyBucketImputed",
-    "WasUtilizationBucketLateBucketImputed",
+    "WasDelinquencyScoreImputed",
+    "WasHasAnyDelinquencyImputed",
+    "WasHasMajorDelinquencyImputed",
+    "WasHighAgeRiskFlagImputed",
+    "WasIncomePerCreditLineImputed",
+    "WasLatePaymentsPerCreditLineImputed",
+    "WasRevolvingUtilizationCappedLogImputed",
     "WasTotalPastDueCappedImputed",
+    "WasUtilizationBucketLateBucketImputed",
+    "WasUtilizationPerAgeImputed",
+    "WasUtilizationPerCreditLineImputed",
+    "WasUtilizationTimesDelinquencyImputed"
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
-X_val   = X_val.drop(columns=zero_importance_cols)
-X_test  = X_test.drop(columns=zero_importance_cols)
+X_val = X_val.drop(columns=zero_importance_cols)
+X_test = X_test.drop(columns=zero_importance_cols)
 
 flags_to_keep = [f for f in X_train_flags if f not in zero_importance_cols]
 
 X_train_flags = flags_to_keep
-X_val_flags   = flags_to_keep
-X_test_flags  = flags_to_keep
+X_val_flags = flags_to_keep
+X_test_flags = flags_to_keep
 
 
-# In[59]:
+# In[20]:
 
 
 # Encode
+# Target
 le = LabelEncoder()
 y_train = le.fit_transform(y_train)
 y_val = le.transform(y_val)
 y_test = le.transform(y_test)
 
+# NN
+X_train_flags_nn = X_train[X_train_flags]
+X_val_flags_nn = X_val[X_val_flags]
+X_test_flags_nn = X_test[X_test_flags]
+
+X_train_nn_encoded = pd.get_dummies(X_train, columns=cat_col_order)
+X_val_nn_encoded = pd.get_dummies(X_val, columns=cat_col_order)
+X_test_nn_encoded = pd.get_dummies(X_test, columns=cat_col_order)
+
+X_val_nn_encoded = X_val_nn_encoded.reindex(columns=X_train_nn_encoded.columns)
+X_test_nn_encoded = X_test_nn_encoded.reindex(columns=X_train_nn_encoded.columns)
+
+X_train_nn_full = pd.concat([X_train_nn_encoded, X_train[num_col_order], X_train_flags_nn], axis=1)
+X_val_nn_full = pd.concat([X_val_nn_encoded, X_val[num_col_order], X_val_flags_nn], axis=1)
+X_test_nn_full = pd.concat([X_test_nn_encoded, X_test[num_col_order], X_test_flags_nn], axis=1)
+
+# xgb
+X_train_xgb = X_train
+X_val_xgb = X_val
+X_test_xgb = X_test
+
 for col in cat_col_order:
-    X_train[col] = X_train[col].astype(str).map(cat_maps[col]).astype(int)
-    X_val[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
-    X_test[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
+    X_train_xgb[col] = X_train[col].astype(str).map(cat_maps[col]).astype(int)
+    X_val_xgb[col] = X_val[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
+    X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[60]:
+# In[21]:
 
 
-# Cast to float32 and int64
-X_train_num = X_train[num_col_order + X_train_flags].astype('float32').values
-X_val_num   = X_val[num_col_order + X_val_flags].astype('float32').values
-X_test_num  = X_test[num_col_order + X_test_flags].astype('float32').values
+# Cast
+# NN
+X_train_nn_final = X_train_nn_full.astype('float32').values
+X_val_nn_final = X_val_nn_full.astype('float32').values
+X_test_nn_final = X_test_nn_full.astype('float32').values
 
-X_train_cat = X_train[cat_col_order].astype('int64').values
-X_val_cat   = X_val[cat_col_order].astype('int64').values
-X_test_cat  = X_test[cat_col_order].astype('int64').values
+# XGB
+X_train_xgb = X_train_xgb.astype(np.float32)
+X_val_xgb = X_val_xgb.astype(np.float32)
+X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[61]:
+# In[22]:
 
 
 # Convert to tensors
-X_train_num_tensor = torch.tensor(X_train_num)
-X_val_num_tensor = torch.tensor(X_val_num)
-X_test_num_tensor = torch.tensor(X_test_num)
-
-X_train_cat_tensor = torch.tensor(X_train_cat)
-X_val_cat_tensor = torch.tensor(X_val_cat)
-X_test_cat_tensor = torch.tensor(X_test_cat)
-
-y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
-y_val_tensor = torch.tensor(y_val, dtype=torch.long)
-y_test_tensor = torch.tensor(y_test, dtype=torch.long)
-
 classes = np.unique(y_train)
 class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
 class_weight_dict = dict(zip(classes, class_weights, strict=True))
 weights_tensor = torch.tensor([class_weight_dict[int(c)] for c in y_train], dtype=torch.float32)
 
-print("Numeric input shape:", X_train_num_tensor.shape)
-print("Categorical input shape:", X_train_cat_tensor.shape)
+X_train_tensor = torch.tensor(X_train_nn_final)
+X_val_tensor = torch.tensor(X_val_nn_final)
+X_test_tensor = torch.tensor(X_test_nn_final)
+
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32) 
+y_val_tensor = torch.tensor(y_val, dtype=torch.long)
+y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+
+print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[62]:
+# In[23]:
 
 
 # Datasets
-class TabularDataset(Dataset):
-    def __init__(self, x_num, x_cat, y):
-        self.x_num = x_num
-        self.x_cat = x_cat
-        self.y = y
+train_ds = TensorDataset(X_train_tensor, y_train_tensor)
+val_ds = TensorDataset(X_val_tensor, y_val_tensor)
+test_ds = TensorDataset(X_test_tensor, y_test_tensor)
 
-    def __len__(self):
-        return len(self.y)
-
-    def __getitem__(self, idx):
-        return self.x_num[idx], self.x_cat[idx], self.y[idx]
-
-train_ds = TabularDataset(X_train_num_tensor, X_train_cat_tensor, y_train_tensor)
-val_ds = TabularDataset(X_val_num_tensor, X_val_cat_tensor, y_val_tensor)
-test_ds = TabularDataset(X_test_num_tensor, X_test_cat_tensor, y_test_tensor)
-
-train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True, drop_last=False)
 val_loader = DataLoader(val_ds, batch_size=64)
 test_loader = DataLoader(test_ds, batch_size=64)
-
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[63]:
+# In[24]:
 
 
 # Model
 class NN(nn.Module):
-    def __init__(self, num_numeric, cat_dims, emb_dims):
+    def __init__(self, input_dim): 
         super().__init__()
+        self.bn_all = nn.BatchNorm1d(input_dim)
 
-        self.emb_layers = nn.ModuleList([
-            nn.Embedding(cat_dim, emb_dim)
-            for cat_dim, emb_dim in zip(cat_dims, emb_dims, strict=True)
-        ])
-        self.emb_dropout = nn.Dropout(0.3)
-
-        self.bn_num = nn.BatchNorm1d(num_numeric)
-
-        total_emb_dim = sum(emb_dims)
-        self.input_dim = num_numeric + total_emb_dim
+        self.input_dim = input_dim 
 
         self.main = nn.Sequential(
             nn.Linear(self.input_dim, 256),
@@ -924,43 +897,26 @@ class NN(nn.Module):
             nn.Dropout(0.3)
         )
 
-        self.cat_skip = nn.Sequential(
-            nn.Linear(total_emb_dim, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.4)
-        )
-
         self.out = nn.Linear(64, 1)
 
-    def forward(self, x_num, x_cat):
+    def forward(self, x_all): 
 
-        x_cat_emb = torch.cat([
-            emb(x_cat[:, i]) for i, emb in enumerate(self.emb_layers)
-        ], dim=1)
-        x_cat_emb = self.emb_dropout(x_cat_emb)
-
-        x_num = self.bn_num(x_num)
-
-        x = torch.cat([x_num, x_cat_emb], dim=1)
+        x = self.bn_all(x_all) 
 
         x_main = self.main(x)
 
-        x_skip = self.skip_proj_main(x) + self.cat_skip(x_cat_emb)
+        x_skip = self.skip_proj_main(x)
 
         x_combined = x_main + x_skip
 
         return self.out(x_combined).squeeze(1)
 
-cat_dims = [len(cat_maps[col]) for col in cat_col_order]
-emb_dims = [min(50, (cat_dim + 1) // 2) for cat_dim in cat_dims]
-
-model = NN(X_train_num.shape[1], cat_dims, emb_dims).to(device)
+model = NN(X_train_tensor.shape[1]).to(device)
 print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[64]:
+# In[25]:
 
 
 # Loss
@@ -987,15 +943,14 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=2.5)
 
 
-# In[65]:
+# In[26]:
 
 
 # Train
 overall_best_val_auc = 0.0
 overall_best_model_state = None
-
 for run in range(num_runs):
-    print(f"\n=== Run {run + 1}/{num_runs} ===")
+    print(f"=== Run {run + 1}/{num_runs} ===")
 
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -1011,16 +966,16 @@ for run in range(num_runs):
         total_train_loss = 0.0
         train_logits, train_labels = [], []
 
-        for x_num, x_cat, yb in train_loader:
-            x_num, x_cat, yb = x_num.to(device), x_cat.to(device), yb.to(device).float()
+        for x_all, yb in train_loader:
+            x_all, yb = x_all.to(device), yb.to(device).float()
 
             optimizer.zero_grad()
-            logits = model(x_num, x_cat)  
+            logits = model(x_all)
             loss = loss_fn(logits, yb)
             loss.backward()
             optimizer.step()
 
-            total_train_loss += loss.item() * x_num.size(0)
+            total_train_loss += loss.item() * x_all.size(0)
             train_logits.append(logits.detach().cpu())
             train_labels.append(yb.cpu())
 
@@ -1035,12 +990,12 @@ for run in range(num_runs):
         val_logits, val_labels = [], []
 
         with torch.no_grad():
-            for x_num, x_cat, yb in val_loader:
-                x_num, x_cat, yb = x_num.to(device), x_cat.to(device), yb.to(device).float()
-                logits = model(x_num, x_cat)
+            for x_all, yb in val_loader:
+                x_all, yb = x_all.to(device), yb.to(device).float()
+                logits = model(x_all)
 
                 loss = loss_fn(logits, yb)
-                total_val_loss += loss.item() * x_num.size(0)
+                total_val_loss += loss.item() * x_all.size(0)
                 val_logits.append(logits.cpu())
                 val_labels.append(yb.cpu())
 
@@ -1062,9 +1017,7 @@ for run in range(num_runs):
 
         scheduler.step(val_auc)
 
-        print(f"Epoch {epoch + 1}/{num_epochs} | "
-              f"Train loss: {train_loss:.6f} | Train AUC: {train_auc:.4f} | "
-              f"Val loss: {val_loss:.6f} | Val AUC: {val_auc:.4f}")
+        print(f"Epoch {epoch + 1}/{num_epochs} | Train loss: {train_loss:.6f} | Train AUC: {train_auc:.4f} | Val loss: {val_loss:.6f} | Val AUC: {val_auc:.4f}")
 
     print(f"Run {run + 1} best Val AUC: {best_val_auc_this_run:.4f}")
 
@@ -1076,7 +1029,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[66]:
+# In[38]:
 
 
 # Evaluation
@@ -1084,24 +1037,21 @@ model.eval()
 y_val_probs = []
 
 with torch.no_grad():
-    for x_num, x_cat, _ in val_loader:  
-        x_num, x_cat = x_num.to(device), x_cat.to(device)
-        outputs = model(x_num, x_cat)
+    for x_all, _ in val_loader:  
+        x_all = x_all.to(device)
+        outputs = model(x_all)
         probs = torch.sigmoid(outputs)
         y_val_probs.extend(probs.cpu().numpy())
 
 y_val_probs = np.array(y_val_probs)
-
-# Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-f_beta_scores = fast_fbeta_scores(y_val, y_val_probs, thresholds, beta=2.4)
-best_thresh_a = thresholds[np.argmax(f_beta_scores)]
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, target_recall=0.71)
 
 y_test_probs = []
 with torch.no_grad():
-    for x_num, x_cat, _ in test_loader:
-        x_num, x_cat = x_num.to(device), x_cat.to(device)
-        outputs = model(x_num, x_cat)
+    for x_all, _ in test_loader:
+        x_all = x_all.to(device)
+        outputs = model(x_all)
         probs = torch.sigmoid(outputs)
         y_test_probs.extend(probs.cpu().numpy())
 
@@ -1116,7 +1066,7 @@ cm = confusion_matrix(y_test, y_test_pred_opt)
 tn, fp, fn, tp = cm.ravel()
 per_class_acc = cm.diagonal() / cm.sum(axis=1)
 
-print("Best threshold for F1:", best_thresh_a)
+print("Best threshold for F-beta (β=2):", best_thresh_a)
 print(report)
 print(f"Accuracy: {acc*100:.2f}%")
 print(f"ROC AUC: {roc_auc:.3f}")
@@ -1132,22 +1082,13 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[67]:
-
-
-# Cast to float32 
-X_train = X_train.astype(np.float32)
-X_val = X_val.astype(np.float32)
-X_test = X_test.astype(np.float32)
-
-
-# In[68]:
+# In[28]:
 
 
 best_param = find_best_param(X_train, y_train)
 
 
-# In[69]:
+# In[29]:
 
 
 # Model
@@ -1163,23 +1104,22 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[70]:
+# In[30]:
 
 
 # Train
-model_b.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=True)
+model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
 
 
-# In[71]:
+# In[37]:
 
 
 # Evaluation
-y_probs = model_b.predict_proba(X_test)[:, 1]
+y_probs = model_b.predict_proba(X_test_xgb)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-f_beta_scores = fast_fbeta_scores(y_test, y_probs, thresholds, beta=2.4)
-best_thresh_b = thresholds[np.argmax(f_beta_scores)]
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, target_recall=0.73)
 
 y_pred = (y_probs > best_thresh_b).astype(int)
 
@@ -1207,7 +1147,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[72]:
+# In[32]:
 
 
 # Importance XGB
@@ -1225,51 +1165,26 @@ importance_df = (
 print(importance_df)
 
 
-# In[73]:
+# In[33]:
 
 
-# Importance NN
+# Shap
 model_cpu = copy.deepcopy(model).cpu()
-model_cpu.eval()
 
-def shap_cpu(X):
-    n_num = X_train_num_tensor.shape[1]
-    n_cat = X_train_cat_tensor.shape[1]
-
-    X_num = X[:, :n_num].astype(np.float32)
-    X_cat = X[:, n_num:n_num + n_cat].astype(np.int64)
-
-    X_num_tensor = torch.tensor(X_num, dtype=torch.float32)
-    X_cat_tensor = torch.tensor(X_cat, dtype=torch.long)
-
+def shap_ohe(X):
+    X_tensor = torch.tensor(X, dtype=torch.float32)
+    model_cpu.eval()
     with torch.no_grad():
-        logits = model_cpu(X_num_tensor, X_cat_tensor)
+        logits = model_cpu(X_tensor)
         probs = torch.sigmoid(logits).numpy()
-
     return probs
 
-X_train_combined = np.hstack([
-    X_train_num_tensor.numpy(),
-    X_train_cat_tensor.numpy()
-])
+feature_names = list(X_train_nn_full.columns)
 
-X_val_combined = np.hstack([
-    X_val_num_tensor.numpy(),
-    X_val_cat_tensor.numpy()
-])
+background = shap.sample(X_train_nn_full.astype('float32').values, 100)
+explainer = shap.KernelExplainer(shap_ohe, background)
 
-background = shap.sample(X_train_combined, 100, random_state=42)
-X_val_sample = X_val_combined[:500]
-
-explainer = shap.KernelExplainer(shap_cpu, background)
-
-shap_values = explainer.shap_values(X_val_sample)
-
-feature_names = (
-    list(num_col_order) +
-    list(cat_col_order) +
-    list(X_train_flags)
-)
+shap_values = explainer.shap_values(X_val_nn_full.astype('float32').values[:500])
 
 shap_values_array = np.array(shap_values)
 mean_abs_shap = np.abs(shap_values_array).mean(axis=0)
@@ -1279,27 +1194,29 @@ shap_importance = pd.DataFrame({
     "mean_abs_shap": mean_abs_shap
 }).sort_values(by="mean_abs_shap", ascending=False)
 
+print("SHAP Importance:")
 print(shap_importance)
 
 
-# In[77]:
+# In[34]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[78]:
+# In[35]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[79]:
+# In[40]:
 
 
 # Save for hosting
+joblib.dump(X_train_nn_full.columns.tolist(), "nn_col_order.pkl")
 joblib.dump(best_thresh_a, "threshold_a.pkl")
 joblib.dump(best_thresh_b, "threshold_b.pkl")
 joblib.dump(num_imputer, "num_imputer.pkl")

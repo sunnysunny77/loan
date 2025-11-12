@@ -110,13 +110,12 @@ def engineer_features(df):
     return engineered_df
 
 class NN(nn.Module):
-    def __init__(self, num_numeric, cat_dims, emb_dims):
+    def __init__(self, input_dim): 
         super().__init__()
-        self.emb_layers = nn.ModuleList([nn.Embedding(cat_dim, emb_dim) for cat_dim, emb_dim in zip(cat_dims, emb_dims, strict=True)])
-        self.emb_dropout = nn.Dropout(0.3)
-        self.bn_num = nn.BatchNorm1d(num_numeric)
-        total_emb_dim = sum(emb_dims)
-        self.input_dim = num_numeric + total_emb_dim
+        self.bn_all = nn.BatchNorm1d(input_dim)
+        
+        self.input_dim = input_dim 
+
         self.main = nn.Sequential(
             nn.Linear(self.input_dim, 256),
             nn.BatchNorm1d(256),
@@ -131,29 +130,29 @@ class NN(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.1)
         )
+
         self.skip_proj_main = nn.Sequential(
             nn.Linear(self.input_dim, 64),
             nn.Dropout(0.3)
         )
-        self.cat_skip = nn.Sequential(
-            nn.Linear(total_emb_dim, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.4)
-        )
+
         self.out = nn.Linear(64, 1)
-    def forward(self, x_num, x_cat):
-        x_cat_emb = torch.cat([emb(x_cat[:, i]) for i, emb in enumerate(self.emb_layers)], dim=1)
-        x_cat_emb = self.emb_dropout(x_cat_emb)
-        x_num = self.bn_num(x_num)
-        x = torch.cat([x_num, x_cat_emb], dim=1)
+
+    def forward(self, x_all): 
+    
+        x = self.bn_all(x_all) 
+
         x_main = self.main(x)
-        x_skip = self.skip_proj_main(x) + self.cat_skip(x_cat_emb)
+
+        x_skip = self.skip_proj_main(x)
+
         x_combined = x_main + x_skip
+        
         return self.out(x_combined).squeeze(1)
 
 model_b = xgb.XGBClassifier()
 model_b.load_model("cr_b.json")
+nn_col_order = joblib.load("nn_col_order.pkl")
 num_imputer = joblib.load("num_imputer.pkl")
 cat_imputer = joblib.load("cat_imputer.pkl")
 robust_scaler = joblib.load("robust_scaler.pkl")
@@ -168,10 +167,7 @@ threshold_b = joblib.load("threshold_b.pkl")
 rare_maps = joblib.load("rare_maps.pkl")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-cat_dims = [len(cat_maps[c]) for c in cat_col_order]
-emb_dims = [min(50, (len(cat_maps[c]) + 1) // 2) for c in cat_col_order]
-
-model = NN(num_numeric=(len(num_col_order) + len(X_train_flags)), cat_dims=cat_dims, emb_dims=emb_dims)
+model = NN(input_dim=len(nn_col_order))
 weights_path = "cr_weights.pth"
 loaded_weights = torch.load(weights_path, map_location=device) 
 model.load_state_dict(loaded_weights)
@@ -194,10 +190,9 @@ class InputData(BaseModel):
     data: Dict[str, Union[str, float, int, None]]
 
 def preprocess(df: pd.DataFrame, for_xgb: bool = False):
-    
     df_copy = engineer_features(df)
 
-    if num_col_order:     
+    if num_col_order:
         df_copy[num_col_order] = df_copy[num_col_order].replace([np.inf, -np.inf], np.nan)
         for col in num_col_order:
             df_copy[f'Was{col}Imputed'] = df_copy[col].isna().astype(int)
@@ -208,7 +203,7 @@ def preprocess(df: pd.DataFrame, for_xgb: bool = False):
             df_copy[skewed_cols] = robust_scaler.transform(df_copy[skewed_cols])
         if normal_cols and std_scaler:
             df_copy[normal_cols] = std_scaler.transform(df_copy[normal_cols])
-            
+
     if cat_col_order:
         df_copy[cat_col_order] = df_copy[cat_col_order].astype('object')
         for col in cat_col_order:
@@ -222,23 +217,20 @@ def preprocess(df: pd.DataFrame, for_xgb: bool = False):
     if for_xgb:
         for col in cat_col_order:
             df_copy[col] = df_copy[col].astype(str).map(cat_maps[col]).fillna(0).astype(int)
-        imputation_flags = [f for f in X_train_flags if f in df_copy.columns]   
-        df_final = df_copy[num_col_order + imputation_flags + cat_col_order].astype(np.float32)    
+        imputation_flags = [f for f in X_train_flags if f in df_copy.columns]
+        df_final = df_copy[num_col_order + imputation_flags + cat_col_order].astype(np.float32)
         trained_features = model_b.get_booster().feature_names
         df_final = df_final.reindex(columns=trained_features, fill_value=0.0)
         return df_final
-    else:
-        for col in cat_col_order:
-            df_copy[col] = df_copy[col].astype(str).map(cat_maps[col]).astype(int)
-        imputation_flags = [f for f in X_train_flags if f in df_copy.columns]
-        x_num_tensor = torch.tensor(df_copy[num_col_order + imputation_flags].values, dtype=torch.float32).to(device)
-        x_cat_tensor = torch.tensor(df_copy[cat_col_order].values, dtype=torch.int64).to(device)
-        return x_num_tensor, x_cat_tensor
+    else: 
+        df_copy = df_copy.reindex(columns=nn_col_order, fill_value=0.0)
+        x_tensor = torch.tensor(df_copy.astype("float32").values, dtype=torch.float32).to(device)
+        return x_tensor
 
 def predict_nn(df: pd.DataFrame, threshold=threshold_a):
-    x_num, x_cat = preprocess(df, for_xgb=False)
+    x_all = preprocess(df, for_xgb=False)
     with torch.no_grad():
-        logits = model(x_num, x_cat)
+        logits = model(x_all)
         probs = torch.sigmoid(logits).cpu().numpy()
         preds = (probs > threshold).astype(int)
     return probs, preds
