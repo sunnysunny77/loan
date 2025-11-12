@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[203]:
+# In[1]:
 
 
 # Imports
@@ -25,6 +25,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.preprocessing import OneHotEncoder
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -45,7 +46,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[288]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
@@ -331,70 +332,6 @@ def collapse_rare_categories(df, threshold=0.005):
 
     return df_copy, rare_maps
 
-def select_features(df, target, n_to_keep=10):
-
-    df_temp = df.copy()
-
-    cat_cols = df_temp.select_dtypes(include=["object", "category"]).columns.tolist()
-    df_model = df_temp.copy()
-    for col in cat_cols:
-        df_model[col] = df_model[col].astype("category").cat.codes
-
-    feature_cols = df_model.columns.tolist()
-
-    X_train, _, y_train, _ = train_test_split(
-        df_model[feature_cols],
-        target,
-        test_size=0.2,
-        random_state=42,
-        stratify=target,
-    )
-
-    X_train = X_train.astype(np.float32)
-
-    params = {
-        "objective": "binary:logistic",
-        "eval_metric": "auc",
-        "scale_pos_weight": sum(y_train==0)/sum(y_train==1),
-        "learning_rate": 0.02,
-        "max_depth": 4,
-        "n_estimators": 1000,
-        "random_state": 42,
-        "n_jobs": -1,
-    }
-
-    model = xgb.XGBClassifier(
-        **best_param,
-    )
-
-    model.fit(X_train, y_train, verbose=False)
-
-    importance_dict = model.get_booster().get_score(importance_type="gain")
-    full_importance = {feat: importance_dict.get(feat, 0.0) for feat in X_train.columns}
-
-    importance_df = (
-        pd.DataFrame({
-            "Feature": list(full_importance.keys()),
-            "Importance": list(full_importance.values())
-        })
-        .sort_values("Importance", ascending=False)
-        .reset_index(drop=True)
-    )
-
-    top_features = importance_df["Feature"].head(n_to_keep).tolist()
-
-    final_features = list(set(top_features + cat_cols))
-
-    dropped_features = [f for f in df_temp.columns if f not in final_features]
-
-    print(f"Kept {len(final_features)} features (including categorical columns)")
-    print(f"Dropped {len(dropped_features)} features")
-    if dropped_features:
-        print(f"Dropped cols: {dropped_features}")
-    print(importance_df)
-
-    return df_temp[final_features].copy(), dropped_features
-
 def impute_and_scale(df):
 
     df_copy = df.copy()
@@ -454,6 +391,7 @@ def transform_val_test(
     rare_maps=None,
     train_columns=None
 ):
+
     df_copy = df.copy()
 
     if cols_to_drop:
@@ -525,7 +463,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[289]:
+# In[3]:
 
 
 # Load datasets
@@ -533,21 +471,21 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[290]:
+# In[4]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[291]:
+# In[5]:
 
 
 # Drop duplicates
 df_train = check_and_drop_duplicates(df_train)
 
 
-# In[292]:
+# In[6]:
 
 
 # Outlier Handling
@@ -569,7 +507,7 @@ df_filtered = outlier_handling(
 df_filtered.describe()
 
 
-# In[293]:
+# In[7]:
 
 
 # Select targets
@@ -577,14 +515,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
 print(target.value_counts())
 
 
-# In[294]:
+# In[8]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[295]:
+# In[9]:
 
 
 # Split train/test
@@ -598,55 +536,48 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[296]:
+# In[10]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[297]:
+# In[11]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[298]:
+# In[12]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[299]:
+# In[13]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[300]:
-
-
-# Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
-
-
-# In[217]:
+# In[14]:
 
 
 # Impute and scale
 X_train, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_col_order, cat_col_order, cat_maps, X_train_flags = impute_and_scale(
-    df_selected
+    df_collapsed
 )
 
 
-# In[218]:
+# In[15]:
 
 
 # Process
-all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop + fs_cols_to_drop
+all_cols_to_drop = feature_cols_to_drop + hm_cols_to_drop + hc_cols_to_drop
 
 X_val = engineer_features(X_val)
 X_val, X_val_flags = transform_val_test(    
@@ -679,39 +610,35 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[219]:
+# In[16]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[220]:
+# In[17]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[221]:
+# In[18]:
 
 
 # Zero importance cols entered after running
 zero_importance_cols = [
-    "WasDebtToIncomeAgeRiskImputed",
-    "WasDelinquencyBucketImputed",
-    "WasDelinquencyScoreImputed",
-    "WasHasAnyDelinquencyImputed",
-    "WasHasMajorDelinquencyImputed",
-    "WasHighAgeRiskFlagImputed",
-    "WasIncomePerCreditLineImputed",
-    "WasLatePaymentsPerCreditLineImputed",
-    "WasRevolvingUtilizationCappedLogImputed",
     "WasTotalPastDueCappedImputed",
+    "WasHasMajorDelinquencyImputed",
+    "WasDelinquencyScoreImputed",
+    "WasDebtToIncomeAgeRiskImputed",
+    "WasUtilizationTimesDelinquencyImputed",
+    "WasHighAgeRiskFlagImputed",
+    "WasRevolvingUtilizationCappedLogImputed",
+    "WasDelinquencyBucketImputed",
     "WasUtilizationBucketLateBucketImputed",
-    "WasUtilizationPerAgeImputed",
-    "WasUtilizationPerCreditLineImputed",
-    "WasUtilizationTimesDelinquencyImputed"
+    "WasHasAnyDelinquencyImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -725,7 +652,7 @@ X_val_flags = flags_to_keep
 X_test_flags = flags_to_keep
 
 
-# In[172]:
+# In[19]:
 
 
 # Encode
@@ -735,21 +662,26 @@ y_train = le.fit_transform(y_train)
 y_val = le.transform(y_val)
 y_test = le.transform(y_test)
 
+# Flags
+X_train_flags = X_train[X_train_flags]
+X_val_flags = X_val[X_val_flags]
+X_test_flags = X_test[X_test_flags]
+
 # NN
-X_train_flags_nn = X_train[X_train_flags]
-X_val_flags_nn = X_val[X_val_flags]
-X_test_flags_nn = X_test[X_test_flags]
+encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
 
-X_train_nn_encoded = pd.get_dummies(X_train, columns=cat_col_order)
-X_val_nn_encoded = pd.get_dummies(X_val, columns=cat_col_order)
-X_test_nn_encoded = pd.get_dummies(X_test, columns=cat_col_order)
+X_train_cat = encoder.fit_transform(X_train[cat_col_order])
+X_val_cat = encoder.transform(X_val[cat_col_order])
+X_test_cat = encoder.transform(X_test[cat_col_order])
 
-X_val_nn_encoded = X_val_nn_encoded.reindex(columns=X_train_nn_encoded.columns)
-X_test_nn_encoded = X_test_nn_encoded.reindex(columns=X_train_nn_encoded.columns)
+cat_feature_names = encoder.get_feature_names_out(cat_col_order)
+X_train_cat_df = pd.DataFrame(X_train_cat, columns=cat_feature_names, index=X_train.index)
+X_val_cat_df = pd.DataFrame(X_val_cat, columns=cat_feature_names, index=X_val.index)
+X_test_cat_df = pd.DataFrame(X_test_cat, columns=cat_feature_names, index=X_test.index)
 
-X_train_nn_full = pd.concat([X_train_nn_encoded, X_train[num_col_order], X_train_flags_nn], axis=1)
-X_val_nn_full = pd.concat([X_val_nn_encoded, X_val[num_col_order], X_val_flags_nn], axis=1)
-X_test_nn_full = pd.concat([X_test_nn_encoded, X_test[num_col_order], X_test_flags_nn], axis=1)
+X_train_nn_full = pd.concat([X_train_cat_df, X_train[num_col_order], X_train_flags], axis=1)
+X_val_nn_full = pd.concat([X_val_cat_df, X_val[num_col_order], X_val_flags], axis=1)
+X_test_nn_full = pd.concat([X_test_cat_df, X_test[num_col_order], X_test_flags], axis=1)
 
 # xgb
 X_train_xgb = X_train
@@ -762,7 +694,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[173]:
+# In[20]:
 
 
 # Cast
@@ -777,7 +709,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[22]:
+# In[21]:
 
 
 # Convert to tensors
@@ -798,7 +730,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[22]:
 
 
 # Datasets
@@ -812,7 +744,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[23]:
 
 
 # Model
@@ -862,7 +794,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[24]:
 
 
 # Loss
@@ -889,7 +821,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[26]:
+# In[25]:
 
 
 # Train
@@ -975,7 +907,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[88]:
+# In[26]:
 
 
 # Evaluation
@@ -1028,7 +960,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[200]:
+# In[27]:
 
 
 # Model
@@ -1055,14 +987,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[201]:
+# In[28]:
 
 
 # Train
 model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
 
 
-# In[202]:
+# In[29]:
 
 
 # Evaluation
@@ -1097,28 +1029,27 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[301]:
+# In[37]:
 
 
-# Importance XGB
-all_features = model_b.get_booster().feature_names
-importance_dict = model_b.get_booster().get_score(importance_type="gain")
-full_importance = {feat: importance_dict.get(feat, 0.0) for feat in all_features}
-importance_df = (
-    pd.DataFrame({
-        "Feature": list(full_importance.keys()),
-        "Importance": list(full_importance.values())
-    })
-    .sort_values("Importance", ascending=False)
-    .reset_index(drop=True)
-)
-print(importance_df)
+# Shap xgb
+explainer = shap.TreeExplainer(model_b)
+shap_values = explainer.shap_values(X_train)
+mean_abs_shap = np.abs(shap_values).mean(axis=0)
+
+shap_importance = pd.DataFrame({
+    "Feature": X_train.columns,
+    "Importance": mean_abs_shap
+}).sort_values("Importance", ascending=False).reset_index(drop=True)
+
+print("SHAP Importance:")
+print(shap_importance)
 
 
-# In[33]:
+# In[31]:
 
 
-# Shap
+# Shap NN
 model_cpu = copy.deepcopy(model).cpu()
 
 def shap_ohe(X):
@@ -1148,21 +1079,21 @@ print("SHAP Importance:")
 print(shap_importance)
 
 
-# In[302]:
+# In[32]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[303]:
+# In[33]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[304]:
+# In[34]:
 
 
 # Save for hosting

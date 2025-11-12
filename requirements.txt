@@ -9,3 +9,4 @@ scikit-learn
 fastapi
 pydantic
 uvicorn
+shap
