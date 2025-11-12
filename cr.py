@@ -366,7 +366,7 @@ def find_best_param(X_train, y_train):
         n_iter=30,  
         scoring=f2_scorer,
         cv=3,      
-        verbose=0,
+        verbose=1,
         random_state=42
     )
 
@@ -1111,7 +1111,7 @@ model_b = xgb.XGBClassifier(
 model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
 
 
-# In[37]:
+# In[39]:
 
 
 # Evaluation
@@ -1119,7 +1119,7 @@ y_probs = model_b.predict_proba(X_test_xgb)[:, 1]
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, target_recall=0.73)
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, target_recall=0.72)
 
 y_pred = (y_probs > best_thresh_b).astype(int)
 
@@ -1198,21 +1198,21 @@ print("SHAP Importance:")
 print(shap_importance)
 
 
-# In[34]:
+# In[40]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[35]:
+# In[41]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[40]:
+# In[42]:
 
 
 # Save for hosting
