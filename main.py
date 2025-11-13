@@ -24,20 +24,20 @@ def engineer_features(df):
     )
     
     TotalPastDueCapped = TotalPastDue.clip(upper=10)
-
-    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(lower=0.0, upper=5.0).fillna(0.0)    
-    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationCapped)
-
+    
+    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
+    RevolvingUtilizationFilled = RevolvingUtilizationCapped.fillna(0.0)
+    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationFilled).replace(0, np.nan)
+        
     AgeSafe = df_e["age"].replace(0, np.nan)
-
-    MonthlyIncomeSafe = df_e["MonthlyIncome"]
 
     DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
-    DebtToIncome = DebtRatioCapped * MonthlyIncomeSafe
-    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
+    DebtToIncome = DebtRatioCapped * df_e["MonthlyIncome"]
+    
+    IncomePerCreditLine = df_e["MonthlyIncome"] / CreditLinesSafe
 
     AgeRisk = np.where(AgeSafe < 25, 1.0,
                  np.where(AgeSafe < 35, 0.8,
@@ -57,6 +57,7 @@ def engineer_features(df):
     df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
+    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -78,7 +79,7 @@ def engineer_features(df):
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    UtilizationBucket = pd.cut(RevolvingUtilizationCapped, bins=Utilization_bins, labels=Utilization_labels)
+    UtilizationBucket = pd.cut(RevolvingUtilizationFilled, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
@@ -91,6 +92,7 @@ def engineer_features(df):
     engineered_cols = [
         "TotalPastDueCapped",
         "DelinquencyScore",
+        "HasAnyDelinquency",
         "HasMajorDelinquency",
         "UtilizationPerAge",
         "LatePaymentsPerCreditLine",

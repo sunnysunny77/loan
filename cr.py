@@ -190,19 +190,19 @@ def engineer_features(df):
 
     TotalPastDueCapped = TotalPastDue.clip(upper=10)
 
-    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(lower=0.0, upper=5.0).fillna(0.0)    
-    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationCapped)
+    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
+    RevolvingUtilizationFilled = RevolvingUtilizationCapped.fillna(0.0)
+    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationFilled).replace(0, np.nan)
 
     AgeSafe = df_e["age"].replace(0, np.nan)
-
-    MonthlyIncomeSafe = df_e["MonthlyIncome"]
 
     DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
-    DebtToIncome = DebtRatioCapped * MonthlyIncomeSafe
-    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
+    DebtToIncome = DebtRatioCapped * df_e["MonthlyIncome"]
+
+    IncomePerCreditLine = df_e["MonthlyIncome"] / CreditLinesSafe
 
     AgeRisk = np.where(AgeSafe < 25, 1.0,
                  np.where(AgeSafe < 35, 0.8,
@@ -222,6 +222,7 @@ def engineer_features(df):
     df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
+    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -243,7 +244,7 @@ def engineer_features(df):
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
-    UtilizationBucket = pd.cut(RevolvingUtilizationCapped, bins=Utilization_bins, labels=Utilization_labels)
+    UtilizationBucket = pd.cut(RevolvingUtilizationFilled, bins=Utilization_bins, labels=Utilization_labels)
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
@@ -256,6 +257,7 @@ def engineer_features(df):
     engineered_cols = [
         "TotalPastDueCapped",
         "DelinquencyScore",
+        "HasAnyDelinquency",
         "HasMajorDelinquency",
         "UtilizationPerAge",
         "LatePaymentsPerCreditLine",
@@ -649,7 +651,7 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=13)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
 
 
 # In[15]:
@@ -729,6 +731,7 @@ zero_importance_cols = [
     "WasRevolvingUtilizationCappedLogImputed",
     "WasDelinquencyBucketImputed",
     "WasUtilizationBucketLateBucketImputed",
+    "WasHasAnyDelinquencyImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -1014,7 +1017,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.70)
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.68)
 
 y_test_probs = []
 with torch.no_grad():
@@ -1096,7 +1099,7 @@ y_probs = model_b.get_booster().predict(dtest)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.72)
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.70)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -1144,23 +1147,20 @@ print(importance_df)
 
 
 # Shap NN
-model_cpu = copy.deepcopy(model).cpu()
+model_gpu = copy.deepcopy(model).to(device)
+model_gpu.eval()
 
-def shap_ohe(X):
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    model_cpu.eval()
+def shap_ohe_gpu(X):
+    X_tensor = torch.tensor(X, dtype=torch.float32, device=device)
     with torch.no_grad():
-        logits = model_cpu(X_tensor)
-        probs = torch.sigmoid(logits).numpy()
+        logits = model_gpu(X_tensor)
+        probs = torch.sigmoid(logits).cpu().numpy()
     return probs
 
 feature_names = list(X_train_nn_full.columns)
-
-background = shap.sample(X_train_nn_full.astype('float32').values, 100)
-explainer = shap.KernelExplainer(shap_ohe, background)
-
-shap_values = explainer.shap_values(X_val_nn_full.astype('float32').values[:500])
-
+background = shap.sample(X_train_tensor.cpu().numpy(), 100)
+explainer = shap.KernelExplainer(shap_ohe_gpu, background)
+shap_values = explainer.shap_values(X_val_tensor[:500].cpu().numpy())
 shap_values_array = np.array(shap_values)
 mean_abs_shap = np.abs(shap_values_array).mean(axis=0)
 

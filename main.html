@@ -7544,20 +7544,20 @@ a.anchor-link {
     <span class="p">)</span>
     
     <span class="n">TotalPastDueCapped</span> <span class="o">=</span> <span class="n">TotalPastDue</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-
-    <span class="n">RevolvingUtilizationCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">lower</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">upper</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>    
-    <span class="n">RevolvingUtilizationCappedLog</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">RevolvingUtilizationCapped</span><span class="p">)</span>
-
+    
+    <span class="n">RevolvingUtilizationCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationOfUnsecuredLines"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+    <span class="n">RevolvingUtilizationFilled</span> <span class="o">=</span> <span class="n">RevolvingUtilizationCapped</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">RevolvingUtilizationCappedLog</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log1p</span><span class="p">(</span><span class="n">RevolvingUtilizationFilled</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
+        
     <span class="n">AgeSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"age"</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
-
-    <span class="n">MonthlyIncomeSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span>
 
     <span class="n">DebtRatioCapped</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">upper</span><span class="o">=</span><span class="mf">10000.0</span><span class="p">)</span>
 
     <span class="n">CreditLinesSafe</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberOfOpenCreditLinesAndLoans"</span><span class="p">]</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
 
-    <span class="n">DebtToIncome</span> <span class="o">=</span> <span class="n">DebtRatioCapped</span> <span class="o">*</span> <span class="n">MonthlyIncomeSafe</span>
-    <span class="n">IncomePerCreditLine</span> <span class="o">=</span> <span class="n">MonthlyIncomeSafe</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
+    <span class="n">DebtToIncome</span> <span class="o">=</span> <span class="n">DebtRatioCapped</span> <span class="o">*</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span>
+    
+    <span class="n">IncomePerCreditLine</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
 
     <span class="n">AgeRisk</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">AgeSafe</span> <span class="o">&lt;</span> <span class="mi">25</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span>
                  <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">AgeSafe</span> <span class="o">&lt;</span> <span class="mi">35</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span>
@@ -7577,6 +7577,7 @@ a.anchor-link {
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"TotalPastDueCapped"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDueCapped</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScore</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"HasAnyDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">HasAnyDelinquency</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"HasMajorDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
         <span class="p">(</span><span class="n">NumberOfTime6089DaysPastDueNotWorse</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">|</span>
         <span class="p">(</span><span class="n">NumberOfTimes90DaysLate</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
@@ -7598,7 +7599,7 @@ a.anchor-link {
 
     <span class="n">Utilization_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.5</span><span class="p">,</span> <span class="mi">10</span><span class="p">]</span>
     <span class="n">Utilization_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Very Low"</span><span class="p">,</span> <span class="s2">"Low"</span><span class="p">,</span> <span class="s2">"Moderate"</span><span class="p">,</span> <span class="s2">"High"</span><span class="p">,</span> <span class="s2">"Very High"</span><span class="p">,</span> <span class="s2">"Extreme"</span><span class="p">]</span>
-    <span class="n">UtilizationBucket</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">RevolvingUtilizationCapped</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Utilization_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Utilization_labels</span><span class="p">)</span>
+    <span class="n">UtilizationBucket</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">RevolvingUtilizationFilled</span><span class="p">,</span> <span class="n">bins</span><span class="o">=</span><span class="n">Utilization_bins</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">Utilization_labels</span><span class="p">)</span>
 
     <span class="n">Late_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">]</span>
     <span class="n">Late_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"NoLate"</span><span class="p">,</span> <span class="s2">"FewLate"</span><span class="p">,</span> <span class="s2">"ModerateLate"</span><span class="p">,</span> <span class="s2">"FrequentLate"</span><span class="p">,</span> <span class="s2">"ChronicLate"</span><span class="p">]</span>
@@ -7611,6 +7612,7 @@ a.anchor-link {
     <span class="n">engineered_cols</span> <span class="o">=</span> <span class="p">[</span>
         <span class="s2">"TotalPastDueCapped"</span><span class="p">,</span>
         <span class="s2">"DelinquencyScore"</span><span class="p">,</span>
+        <span class="s2">"HasAnyDelinquency"</span><span class="p">,</span>
         <span class="s2">"HasMajorDelinquency"</span><span class="p">,</span>
         <span class="s2">"UtilizationPerAge"</span><span class="p">,</span>
         <span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">,</span>
@@ -7790,48 +7792,6 @@ a.anchor-link {
 <span class="c1"># pip install -r requirements.txt</span>
 <span class="c1"># python3 -m http.server</span>
 <span class="c1"># pm2 start venv/bin/python --name "fastapi-app" -- -m uvicorn main:app --host 127.0.0.1 --port 8001</span>
-</pre></div>
-</div>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1861c565-eb87-4afe-89e4-4ec130d31f19">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
-<div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="cm-editor cm-s-jupyter">
-<div class="highlight hl-ipython3"><pre><span></span> 
-</pre></div>
-</div>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7c7e86d2-6a96-4dbf-aa95-93ce726c6d59">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
-<div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="cm-editor cm-s-jupyter">
-<div class="highlight hl-ipython3"><pre><span></span> 
-</pre></div>
-</div>
-</div>
-</div>
-</div>
-</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=389b078e-e428-4cf5-9930-2fb0c6452209">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea">
-<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div>
-<div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
-<div class="cm-editor cm-s-jupyter">
-<div class="highlight hl-ipython3"><pre><span></span> 
 </pre></div>
 </div>
 </div>
