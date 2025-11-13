@@ -22,9 +22,10 @@ def engineer_features(df):
         + NumberOfTimes90DaysLate
         + NumberOfTime6089DaysPastDueNotWorse
     )
+    
     TotalPastDueCapped = TotalPastDue.clip(upper=10)
 
-    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
+    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(lower=0.0, upper=5.0).fillna(0.0)    
     RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationCapped)
 
     AgeSafe = df_e["age"].replace(0, np.nan)
@@ -50,13 +51,12 @@ def engineer_features(df):
 
     UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
 
-    HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+    HasAnyDelinquency = (TotalPastDueCapped > 0).astype(int)
 
     df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
     df_e["TotalPastDueCapped"] = TotalPastDueCapped
-    
+
     df_e["DelinquencyScore"] = DelinquencyScore
-    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -91,7 +91,6 @@ def engineer_features(df):
     engineered_cols = [
         "TotalPastDueCapped",
         "DelinquencyScore",
-        "HasAnyDelinquency",
         "HasMajorDelinquency",
         "UtilizationPerAge",
         "LatePaymentsPerCreditLine",

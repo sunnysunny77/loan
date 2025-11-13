@@ -32,7 +32,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # Constants
-lr = 1e-3
+lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
@@ -69,35 +69,39 @@ def dataset_summary(df, y=None, threshold=0.7):
         df_copy = df_copy.drop(columns=[y.name])
 
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
-
     for col in cat_cols:
         df_copy[col] = df_copy[col].astype("category").cat.codes
 
-    print(f"Dataset shape: {df_copy.shape}")
-    print(f"Total rows: {len(df_copy)}")
-    print(f"Total duplicate rows: {df_copy.duplicated().sum()}")
-
-    summary = pd.DataFrame({
-        "dtype": df_copy.dtypes,
-        "non_null": df_copy.notna().sum(),
-        "missing": df_copy.isna().sum(),
-        "missing_%": (df_copy.isna().mean() * 100).round(2),
-        "unique": df_copy.nunique()
-    })
-
     numeric_cols = df_copy.select_dtypes(include="number").columns
-    feature_cols = df_copy.columns.tolist()
-    desc = df_copy[numeric_cols].describe().T
-    desc["skew"] = df_copy[numeric_cols].skew()
-    summary = summary.join(desc[["mean", "std", "min", "25%", "50%", "75%", "max", "skew"]])
+    imputed_flags = [col for col in numeric_cols if col.startswith("Was") or col.endswith("Imputed")]
+    regular_numeric_cols = [col for col in numeric_cols if col not in imputed_flags]
+
+    df_num = df_copy[regular_numeric_cols].copy()
+
+    df_num.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    print(f"Dataset shape: {df_num.shape}")
+    print(f"Total rows: {len(df_num)}")
+    print(f"Total duplicate rows: {df_num.duplicated().sum()}")
+
+    desc = df_num.describe().T
+    desc["skew"] = df_num.skew()
+
+    desc["dtype"] = df_copy[desc.index].dtypes
+    desc["non_null"] = df_copy[desc.index].notna().sum()
+    desc["missing"] = df_copy[desc.index].isna().sum()
+    desc["missing_%"] = (df_copy[desc.index].isna().mean() * 100).round(2)
+    desc["unique"] = df_copy[desc.index].nunique()
 
     if y is not None:
-        df_copy['target'] = y
-        summary["corr_with_target"] =  df_copy.corr()['target'].drop('target')
+        df_num['target'] = y
+        desc["corr_with_target"] = df_num.corr()['target'].drop('target')
 
     corr_matrix = df_copy.corr(numeric_only=True)
+
     corr_pairs = (
-        corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        corr_matrix
+        .where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
         .stack()
         .sort_values(ascending=False)
     )
@@ -109,12 +113,21 @@ def dataset_summary(df, y=None, threshold=0.7):
         corr_map.setdefault(f1, []).append(f"{f2} ({val:.2f})")
         corr_map.setdefault(f2, []).append(f"{f1} ({val:.2f})")
 
-    summary["high_corr_flag"] = summary.index.map(lambda col: col in corr_map)
-    summary["high_corr_with"] = summary.index.map(
-        lambda col: ", ".join(corr_map[col]) if col in corr_map else ""
-    )
+    high_corr_flags = []
+    high_corr_with = []
 
-    return summary.sort_values("missing_%", ascending=False)
+    for col in desc.index:
+        if col in corr_map:
+            high_corr_flags.append(True)
+            high_corr_with.append(", ".join(corr_map[col]))
+        else:
+            high_corr_flags.append(False)
+            high_corr_with.append("")
+
+    desc["high_corr_flag"] = high_corr_flags
+    desc["high_corr_with"] = high_corr_with
+
+    return desc.sort_values("missing_%", ascending=False)
 
 def outlier_handling(df, target_col, n_high=100, n_low=10):
 
@@ -174,9 +187,10 @@ def engineer_features(df):
         + NumberOfTimes90DaysLate
         + NumberOfTime6089DaysPastDueNotWorse
     )
+
     TotalPastDueCapped = TotalPastDue.clip(upper=10)
 
-    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0).fillna(0.0).replace(0, np.nan)
+    RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(lower=0.0, upper=5.0).fillna(0.0)    
     RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationCapped)
 
     AgeSafe = df_e["age"].replace(0, np.nan)
@@ -202,13 +216,12 @@ def engineer_features(df):
 
     UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
 
-    HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+    HasAnyDelinquency = (TotalPastDueCapped > 0).astype(int)
 
     df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
     df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
-    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -243,7 +256,6 @@ def engineer_features(df):
     engineered_cols = [
         "TotalPastDueCapped",
         "DelinquencyScore",
-        "HasAnyDelinquency",
         "HasMajorDelinquency",
         "UtilizationPerAge",
         "LatePaymentsPerCreditLine",
@@ -331,6 +343,75 @@ def collapse_rare_categories(df, threshold=0.005):
             print(f"Column '{col}': no rare categories to collapse")
 
     return df_copy, rare_maps
+
+def select_features(df, target, n_to_keep=10):
+
+    df_temp = df.copy()
+
+    cat_cols = df_temp.select_dtypes(include=["object", "category"]).columns.tolist()
+    df_model = df_temp.copy()
+    for col in cat_cols:
+        df_model[col] = df_model[col].astype("category").cat.codes
+
+    feature_cols = df_model.columns.tolist()
+
+    X_train, _, y_train, _ = train_test_split(
+        df_model[feature_cols],
+        target,
+        test_size=0.2,
+        random_state=42,
+        stratify=target,
+    )
+
+    X_train = X_train.astype(np.float32)
+
+    best_param = {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "scale_pos_weight": sum(y_train==0)/sum(y_train==1),
+        "learning_rate": 0.02,
+        "max_depth": 4,
+        "min_child_weight": 5,
+        "subsample": 0.85,
+        "colsample_bytree": 0.85,
+        "gamma": 1,
+        "reg_alpha": 1,
+        "reg_lambda": 2,
+        "n_estimators": 1000,
+        "random_state": 42,
+        "n_jobs": -1,
+        "tree_method": "hist", 
+        "device": "cuda",
+    }
+
+    model = xgb.XGBClassifier(
+        **best_param,
+    )
+
+    model.fit(X_train, y_train, verbose=False)
+
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_train)
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+
+    importance_df = pd.DataFrame({
+        "Feature": X_train.columns,
+        "Importance": mean_abs_shap
+    }).sort_values("Importance", ascending=False).reset_index(drop=True)
+
+    top_features = importance_df["Feature"].head(n_to_keep).tolist()
+
+    final_features = list(set(top_features + cat_cols))
+
+    dropped_features = [f for f in df_temp.columns if f not in final_features]
+
+    print(f"Kept {len(final_features)} features (including categorical columns)")
+    print(f"Dropped {len(dropped_features)} features")
+    if dropped_features:
+        print(f"Dropped cols: {dropped_features}")
+    print(importance_df)
+
+    return df_temp[final_features].copy(), dropped_features
 
 def impute_and_scale(df):
 
@@ -567,13 +648,23 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 # In[14]:
 
 
-# Impute and scale
-X_train, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_col_order, cat_col_order, cat_maps, X_train_flags = impute_and_scale(
-    df_collapsed
-)
+# Feature selection
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=13)
 
 
 # In[15]:
+
+
+# Impute and scale
+X_train, num_imputer, cat_imputer, robust_scaler, std_scaler, num_col_order, skewed_col_order, cat_col_order, cat_maps, X_train_flags = impute_and_scale(
+    df_selected
+)
+print(num_col_order)
+print(cat_col_order)
+print(cat_maps)
+
+
+# In[16]:
 
 
 # Process
@@ -610,21 +701,21 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[16]:
+# In[17]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[17]:
+# In[18]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[18]:
+# In[19]:
 
 
 # Zero importance cols entered after running
@@ -638,7 +729,6 @@ zero_importance_cols = [
     "WasRevolvingUtilizationCappedLogImputed",
     "WasDelinquencyBucketImputed",
     "WasUtilizationBucketLateBucketImputed",
-    "WasHasAnyDelinquencyImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -650,9 +740,10 @@ flags_to_keep = [f for f in X_train_flags if f not in zero_importance_cols]
 X_train_flags = flags_to_keep
 X_val_flags = flags_to_keep
 X_test_flags = flags_to_keep
+print(X_train_flags)
 
 
-# In[19]:
+# In[20]:
 
 
 # Encode
@@ -694,7 +785,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[20]:
+# In[21]:
 
 
 # Cast
@@ -709,7 +800,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[21]:
+# In[22]:
 
 
 # Convert to tensors
@@ -730,7 +821,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[22]:
+# In[23]:
 
 
 # Datasets
@@ -744,7 +835,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[23]:
+# In[24]:
 
 
 # Model
@@ -794,7 +885,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[24]:
+# In[25]:
 
 
 # Loss
@@ -818,10 +909,10 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=3)
+loss_fn = FocalLoss(alpha=alpha, gamma=2.5)
 
 
-# In[25]:
+# In[26]:
 
 
 # Train
@@ -907,7 +998,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[26]:
+# In[27]:
 
 
 # Evaluation
@@ -960,7 +1051,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[27]:
+# In[28]:
 
 
 # Model
@@ -979,6 +1070,8 @@ best_param = {
     "n_estimators": 1000,
     "random_state": 42,
     "n_jobs": -1,
+    "tree_method": "hist", 
+    "device": "cuda",
 }
 
 model_b = xgb.XGBClassifier(
@@ -987,18 +1080,19 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[28]:
+# In[29]:
 
 
 # Train
 model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
 
 
-# In[29]:
+# In[30]:
 
 
 # Evaluation
-y_probs = model_b.predict_proba(X_test_xgb)[:, 1]
+dtest = xgb.DMatrix(X_test_xgb)
+y_probs = model_b.get_booster().predict(dtest) 
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
@@ -1029,24 +1123,24 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[37]:
+# In[31]:
 
 
 # Shap xgb
 explainer = shap.TreeExplainer(model_b)
-shap_values = explainer.shap_values(X_train)
+shap_values = explainer.shap_values(X_train_xgb)
 mean_abs_shap = np.abs(shap_values).mean(axis=0)
 
-shap_importance = pd.DataFrame({
-    "Feature": X_train.columns,
+importance_df = pd.DataFrame({
+    "Feature": X_train_xgb.columns,
     "Importance": mean_abs_shap
 }).sort_values("Importance", ascending=False).reset_index(drop=True)
 
 print("SHAP Importance:")
-print(shap_importance)
+print(importance_df)
 
 
-# In[31]:
+# In[32]:
 
 
 # Shap NN
@@ -1070,30 +1164,30 @@ shap_values = explainer.shap_values(X_val_nn_full.astype('float32').values[:500]
 shap_values_array = np.array(shap_values)
 mean_abs_shap = np.abs(shap_values_array).mean(axis=0)
 
-shap_importance = pd.DataFrame({
+importance_df = pd.DataFrame({
     "feature": feature_names,
     "mean_abs_shap": mean_abs_shap
-}).sort_values(by="mean_abs_shap", ascending=False)
+}).sort_values(by="mean_abs_shap", ascending=False).reset_index(drop=True)
 
 print("SHAP Importance:")
-print(shap_importance)
+print(importance_df)
 
 
-# In[32]:
+# In[33]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[33]:
+# In[34]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[34]:
+# In[35]:
 
 
 # Save for hosting
