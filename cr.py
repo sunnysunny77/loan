@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[3]:
 
 
 # Imports
@@ -46,7 +46,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[2]:
+# In[4]:
 
 
 def load_datasets(base_path="./"):
@@ -129,38 +129,41 @@ def dataset_summary(df, y=None, threshold=0.7):
 
     return desc.sort_values("missing_%", ascending=False)
 
-def outlier_handling(df, target_col, n_high=100, n_low=10):
+def outlier_handling(X, y, n_high=100, n_low=10):
 
-    df_copy = df.copy()
+    X_copy = X.copy()
+    y_copy = y.copy()
 
-    numeric_cols = df_copy.select_dtypes(include=["number"]).columns.tolist()
-    df_copy[numeric_cols] = df_copy[numeric_cols].fillna(0)
-
-    X = df_copy.drop(columns=[target_col])
-    y = df_copy[target_col]
+    numeric_cols = X_copy.select_dtypes(include=["number"]).columns.tolist()
+    X_copy[numeric_cols] = X_copy[numeric_cols].fillna(0)
 
     hgb = HistGradientBoostingClassifier(
         max_iter=100,
         random_state=42,
         min_samples_leaf=20
     )
-    hgb.fit(X, y)
+    hgb.fit(X_copy, y_copy)
+    y_pred_proba = hgb.predict_proba(X_copy)[:, 1]
 
-    y_pred_proba = hgb.predict_proba(X)[:, 1]
+    df_combined = X_copy.copy()
+    df_combined["__pred_proba__"] = y_pred_proba
+    df_combined["__target__"] = y_copy.values  # keep target with same index
 
-    df_copy["__pred_proba__"] = y_pred_proba
-    df_sorted = df_copy.sort_values("__pred_proba__", ascending=True).reset_index(drop=True)
+    df_sorted = df_combined.sort_values("__pred_proba__", ascending=True).reset_index(drop=True)
 
     total_rows = len(df_sorted)
     start_idx = n_low
     end_idx = max(0, total_rows - n_high)
-    df_filtered = df_sorted.iloc[start_idx:end_idx].drop(columns="__pred_proba__").reset_index(drop=True)
+
+    df_filtered = df_sorted.iloc[start_idx:end_idx].reset_index(drop=True)
 
     dropped = total_rows - len(df_filtered)
-
     print(f"Dropped {dropped} outlier rows (lowest {n_low}, highest {n_high})")
 
-    return df_filtered
+    X_filtered = df_filtered.drop(columns=["__pred_proba__", "__target__"])
+    y_filtered = df_filtered["__target__"]
+
+    return X_filtered, y_filtered
 
 def drop_target_and_ids(df):
 
@@ -544,7 +547,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[3]:
+# In[5]:
 
 
 # Load datasets
@@ -552,24 +555,24 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[6]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[5]:
+# In[7]:
 
 
 # Drop duplicates
 df_train = check_and_drop_duplicates(df_train)
 
 
-# In[6]:
+# In[9]:
 
 
-# Outlier Handling
+# Outlier Handling Manual
 numeric_df = df_train.select_dtypes(include=['number'])
 
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
@@ -578,32 +581,25 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 
-df_filtered = outlier_handling(
-    df_train,
-    target_col="SeriousDlqin2yrs",
-    n_high=130, 
-    n_low=30
-)
-
-df_filtered.describe()
+df_train.describe()
 
 
-# In[7]:
+# In[11]:
 
 
 # Select targets
-df_features, target, feature_cols_to_drop = drop_target_and_ids(df_filtered)
+df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[8]:
+# In[12]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[9]:
+# In[13]:
 
 
 # Split train/test
@@ -611,48 +607,56 @@ X_train_full, X_test, y_train_full, y_test = train_test_split(
     df_features, target, test_size=0.2, stratify=target, random_state=42
 )
 
+# Outlier Handling 
+X_train_cut, y_train_cut = outlier_handling(
+    X_train_full,
+    y_train_full,
+    n_high=130, 
+    n_low=30
+)
+
 # Split train/val
 X_train, X_val, y_train, y_val = train_test_split(
-    X_train_full, y_train_full, test_size=0.2, stratify=y_train_full, random_state=42
+    X_train_cut, y_train_cut, test_size=0.2, stratify=y_train_cut, random_state=42
 )
 
 
-# In[10]:
+# In[14]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[11]:
+# In[15]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[12]:
+# In[16]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[13]:
+# In[17]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[14]:
+# In[18]:
 
 
 # Feature selection
 df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
 
 
-# In[15]:
+# In[19]:
 
 
 # Impute and scale
@@ -664,7 +668,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[16]:
+# In[20]:
 
 
 # Process
@@ -701,21 +705,21 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[17]:
+# In[21]:
 
 
 # Drop duplicates
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 
 
-# In[18]:
+# In[22]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[19]:
+# In[23]:
 
 
 # Zero importance cols entered after running
@@ -743,7 +747,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[20]:
+# In[24]:
 
 
 # Encode
@@ -785,7 +789,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[21]:
+# In[25]:
 
 
 # Cast
@@ -800,7 +804,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[22]:
+# In[26]:
 
 
 # Convert to tensors
@@ -821,7 +825,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[27]:
 
 
 # Datasets
@@ -835,7 +839,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[28]:
 
 
 # Model
@@ -885,7 +889,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[29]:
 
 
 # Loss
@@ -912,7 +916,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[26]:
+# In[30]:
 
 
 # Train
@@ -998,7 +1002,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[36]:
+# In[31]:
 
 
 # Evaluation
@@ -1051,7 +1055,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[28]:
+# In[32]:
 
 
 # Model
@@ -1080,14 +1084,14 @@ model_b = xgb.XGBClassifier(
 )
 
 
-# In[29]:
+# In[33]:
 
 
 # Train
 model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
 
 
-# In[30]:
+# In[34]:
 
 
 # Evaluation
@@ -1123,7 +1127,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[31]:
+# In[35]:
 
 
 # Shap xgb
@@ -1140,7 +1144,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[32]:
+# In[36]:
 
 
 # Shap NN
