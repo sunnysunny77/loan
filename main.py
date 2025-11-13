@@ -57,7 +57,6 @@ def engineer_features(df):
     df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
-    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -92,7 +91,6 @@ def engineer_features(df):
     engineered_cols = [
         "TotalPastDueCapped",
         "DelinquencyScore",
-        "HasAnyDelinquency",
         "HasMajorDelinquency",
         "UtilizationPerAge",
         "LatePaymentsPerCreditLine",

@@ -36,7 +36,7 @@ lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 2
+num_runs = 5
 max_patience = 13
 
 # pd 
@@ -222,7 +222,6 @@ def engineer_features(df):
     df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
-    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -257,7 +256,6 @@ def engineer_features(df):
     engineered_cols = [
         "TotalPastDueCapped",
         "DelinquencyScore",
-        "HasAnyDelinquency",
         "HasMajorDelinquency",
         "UtilizationPerAge",
         "LatePaymentsPerCreditLine",
@@ -731,7 +729,6 @@ zero_importance_cols = [
     "WasRevolvingUtilizationCappedLogImputed",
     "WasDelinquencyBucketImputed",
     "WasUtilizationBucketLateBucketImputed",
-    "WasHasAnyDelinquencyImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -912,7 +909,7 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 alpha = class_weights[1] / (class_weights[0] + class_weights[1])
-loss_fn = FocalLoss(alpha=alpha, gamma=2.5)
+loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
 # In[26]:
@@ -1001,7 +998,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[27]:
+# In[36]:
 
 
 # Evaluation
@@ -1017,7 +1014,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.68)
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.69)
 
 y_test_probs = []
 with torch.no_grad():
@@ -1173,21 +1170,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[33]:
+# In[37]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[34]:
+# In[38]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[35]:
+# In[39]:
 
 
 # Save for hosting
