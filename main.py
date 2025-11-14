@@ -54,9 +54,9 @@ def engineer_features(df):
     HasAnyDelinquency = (TotalPastDueCapped > 0).astype(int)
 
     df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
-    df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
+    df_e["DelinquencyDensity"] = TotalPastDue / AgeSafe
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -64,17 +64,14 @@ def engineer_features(df):
 
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
-    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLog / CreditLinesSafe
-
+    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
+           
+    df_e["PaymentStress"] = df_e["DebtRatio"] * RevolvingUtilizationFilled
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
-
+    
     df_e["HighAgeRiskFlag"] = (AgeRisk <= 0.4).astype(int)
-
-    DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
-    DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
-    df_e["DelinquencyBucket"] = pd.cut(DelinquencyScore, bins=DelinquencyScore_bins, labels=DelinquencyScore_labels)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -89,14 +86,14 @@ def engineer_features(df):
     )
 
     engineered_cols = [
-        "TotalPastDueCapped",
         "DelinquencyScore",
+        "DelinquencyDensity",
         "HasMajorDelinquency",
         "UtilizationPerAge",
-        "LatePaymentsPerCreditLine",
         "IncomePerCreditLine",
+        "LatePaymentsPerCreditLine",
         "DebtToIncomeAgeRisk",
-        "DelinquencyBucket",
+        "PaymentStress",
         "UtilizationBucketLateBucket",
         "UtilizationPerCreditLine",
         "UtilizationTimesDelinquency",

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[47]:
 
 
 # Imports
@@ -26,6 +26,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import ParameterSampler
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,7 +37,7 @@ lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 5
+num_runs = 2
 max_patience = 13
 
 # pd 
@@ -46,7 +47,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[2]:
+# In[48]:
 
 
 def load_datasets(base_path="./"):
@@ -222,9 +223,9 @@ def engineer_features(df):
     HasAnyDelinquency = (TotalPastDueCapped > 0).astype(int)
 
     df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
-    df_e["TotalPastDueCapped"] = TotalPastDueCapped
 
     df_e["DelinquencyScore"] = DelinquencyScore
+    df_e["DelinquencyDensity"] = TotalPastDue / AgeSafe
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -232,17 +233,14 @@ def engineer_features(df):
 
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
-    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLog / CreditLinesSafe
+    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
 
+    df_e["PaymentStress"] = df_e["DebtRatio"] * RevolvingUtilizationFilled
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
 
     df_e["HighAgeRiskFlag"] = (AgeRisk <= 0.4).astype(int)
-
-    DelinquencyScore_bins = [-1, 0, 1, 3, 6, np.inf]
-    DelinquencyScore_labels = ["None", "Few", "Moderate", "Frequent", "Chronic"]
-    df_e["DelinquencyBucket"] = pd.cut(DelinquencyScore, bins=DelinquencyScore_bins, labels=DelinquencyScore_labels)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -257,14 +255,14 @@ def engineer_features(df):
     )
 
     engineered_cols = [
-        "TotalPastDueCapped",
         "DelinquencyScore",
+        "DelinquencyDensity",
         "HasMajorDelinquency",
         "UtilizationPerAge",
-        "LatePaymentsPerCreditLine",
         "IncomePerCreditLine",
+        "LatePaymentsPerCreditLine",
         "DebtToIncomeAgeRisk",
-        "DelinquencyBucket",
+        "PaymentStress",
         "UtilizationBucketLateBucket",
         "UtilizationPerCreditLine",
         "UtilizationTimesDelinquency",
@@ -371,19 +369,21 @@ def select_features(df, target, n_to_keep=10):
     best_param = {
         "objective": "binary:logistic",
         "eval_metric": "auc",
-        "scale_pos_weight": sum(y_train==0)/sum(y_train==1),
-        "learning_rate": 0.02,
-        "max_depth": 4,
-        "min_child_weight": 5,
-        "subsample": 0.85,
-        "colsample_bytree": 0.85,
-        "gamma": 1,
-        "reg_alpha": 1,
-        "reg_lambda": 2,
-        "n_estimators": 1000,
+        "scale_pos_weight": sum(y_train == 0) / sum(y_train == 1),
+        "learning_rate": 0.012,        
+        "n_estimators": 2000,          
+        "max_depth": 6,              
+        "min_child_weight": 8,         
+        "gamma": 0.5,                 
+        "subsample": 0.85,             
+        "colsample_bytree": 0.85,     
+        "reg_alpha": 3,               
+        "reg_lambda": 6,               
+        "max_bin": 1024,              
+        "booster": "gbtree",
         "random_state": 42,
         "n_jobs": -1,
-        "tree_method": "hist", 
+        "tree_method": "hist",    
         "device": "cuda",
     }
 
@@ -547,7 +547,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[3]:
+# In[49]:
 
 
 # Load datasets
@@ -555,14 +555,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[4]:
+# In[50]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[5]:
+# In[51]:
 
 
 # Outlier Handling Manual
@@ -577,7 +577,7 @@ df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 df_train.describe()
 
 
-# In[6]:
+# In[52]:
 
 
 # Select targets
@@ -585,14 +585,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[7]:
+# In[53]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[8]:
+# In[54]:
 
 
 # Split train/test
@@ -614,7 +614,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[9]:
+# In[55]:
 
 
 # Drop duplicates
@@ -622,48 +622,48 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[10]:
+# In[56]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[11]:
+# In[57]:
 
 
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[12]:
+# In[58]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[13]:
+# In[59]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[14]:
+# In[60]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[15]:
+# In[61]:
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=13)
 
 
-# In[16]:
+# In[62]:
 
 
 # Impute and scale
@@ -675,7 +675,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[17]:
+# In[63]:
 
 
 # Process
@@ -712,27 +712,29 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[18]:
+# In[64]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[19]:
+# In[65]:
 
 
 # Zero importance cols entered after running
 zero_importance_cols = [
-    "WasTotalPastDueCappedImputed",
     "WasHasMajorDelinquencyImputed",
     "WasDelinquencyScoreImputed",
     "WasDebtToIncomeAgeRiskImputed",
     "WasUtilizationTimesDelinquencyImputed",
     "WasHighAgeRiskFlagImputed",
     "WasRevolvingUtilizationCappedLogImputed",
-    "WasDelinquencyBucketImputed",
     "WasUtilizationBucketLateBucketImputed",
+    "WasPaymentStressImputed",
+    "WasIncomePerCreditLineImputed",
+    "WasHasMajorDelinquencyImputed",
+    "WasDelinquencyDensityImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -747,7 +749,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[20]:
+# In[66]:
 
 
 # Encode
@@ -789,7 +791,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[21]:
+# In[67]:
 
 
 # Cast
@@ -804,7 +806,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[22]:
+# In[68]:
 
 
 # Convert to tensors
@@ -825,7 +827,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[23]:
+# In[69]:
 
 
 # Datasets
@@ -839,7 +841,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[24]:
+# In[70]:
 
 
 # Model
@@ -889,7 +891,7 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[25]:
+# In[71]:
 
 
 # Loss
@@ -916,7 +918,7 @@ alpha = class_weights[1] / (class_weights[0] + class_weights[1])
 loss_fn = FocalLoss(alpha=alpha, gamma=3)
 
 
-# In[26]:
+# In[72]:
 
 
 # Train
@@ -1002,7 +1004,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[36]:
+# In[73]:
 
 
 # Evaluation
@@ -1055,43 +1057,57 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[28]:
+# In[74]:
 
 
-# Model
-best_param = {
-    "objective": "binary:logistic",
-    "eval_metric": "auc",
-    "scale_pos_weight": sum(y_train==0)/sum(y_train==1),
-    "learning_rate": 0.02,
-    "max_depth": 4,
-    "min_child_weight": 5,
-    "subsample": 0.85,
-    "colsample_bytree": 0.85,
-    "gamma": 1,
-    "reg_alpha": 1,
-    "reg_lambda": 2,
-    "n_estimators": 1000,
-    "random_state": 42,
-    "n_jobs": -1,
-    "tree_method": "hist", 
-    "device": "cuda",
+param_dist = {
+    "learning_rate": [0.008, 0.01, 0.012],
+    "max_depth": [4, 5, 6],
+    "min_child_weight": [4, 6, 8],
+    "gamma": [0.0, 0.5, 1.0],
+    "subsample": [0.75, 0.85, 0.9],
+    "colsample_bytree": [0.75, 0.85, 0.9],
+    "reg_alpha": [1, 3, 5],
+    "reg_lambda": [4, 6, 8],
 }
 
-model_b = xgb.XGBClassifier(
-    **best_param,
-    early_stopping_rounds=100,
-)
+n_iter = 10  
+sampler = ParameterSampler(param_dist, n_iter=n_iter, random_state=42)
+
+best_auc, best_params = 0.0, None
+
+for i, params in enumerate(sampler, start=1):
+    print(f"[INFO] Running model {i}/{len(sampler)} with params: {params}")
+
+    model_b = xgb.XGBClassifier(
+        objective="binary:logistic",
+        eval_metric="auc",
+        scale_pos_weight=sum(y_train == 0) / sum(y_train == 1),
+        n_estimators=800,
+        max_bin=1024,
+        booster="gbtree",
+        random_state=42,
+        n_jobs=-1,
+        tree_method="hist",
+        device="cuda",
+        early_stopping_rounds=100,
+        **params
+    )
+
+    model_b.fit(
+        X_train_xgb, y_train,
+        eval_set=[(X_val_xgb, y_val)],
+        verbose=False
+    )
+
+    if model_b.best_score > best_auc:
+        best_auc, best_params = model_b.best_score, params
+
+print("Best AUC:", best_auc)
+print("Best params:", best_params)
 
 
-# In[29]:
-
-
-# Train
-model_b.fit(X_train_xgb, y_train, eval_set=[(X_val_xgb, y_val)], verbose=True)
-
-
-# In[38]:
+# In[75]:
 
 
 # Evaluation
@@ -1100,7 +1116,7 @@ y_probs = model_b.get_booster().predict(dtest)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.72)
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.71)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -1127,7 +1143,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[31]:
+# In[76]:
 
 
 # Shap xgb
@@ -1144,7 +1160,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[32]:
+# In[77]:
 
 
 # Shap NN
@@ -1174,21 +1190,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[39]:
+# In[78]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[40]:
+# In[79]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[41]:
+# In[80]:
 
 
 # Save for hosting
