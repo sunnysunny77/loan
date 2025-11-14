@@ -26,18 +26,26 @@ def engineer_features(df):
     TotalPastDueCapped = TotalPastDue.clip(upper=10)
     
     RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
-    RevolvingUtilizationFilled = RevolvingUtilizationCapped.fillna(0.0)
+    RevolvingUtilizationFilled = RevolvingUtilizationCapped.fillna(0)
     RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationFilled).replace(0, np.nan)
         
     AgeSafe = df_e["age"].replace(0, np.nan)
 
     DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
 
+    DebtRatioFilled = DebtRatioCapped.fillna(0)
+
+    MonthlyIncomeFilled = df_e["MonthlyIncome"].fillna(0)
+
+    MonthlyIncomeSafe = df_e["MonthlyIncome"].replace(0, np.nan)
+
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
-    DebtToIncome = DebtRatioCapped * df_e["MonthlyIncome"]
+    NumberRealEstateLoansOrLinesfilled = df_e["NumberRealEstateLoansOrLines"].fillna(0)
+
+    DebtToIncome = DebtRatioFilled * MonthlyIncomeFilled
     
-    IncomePerCreditLine = df_e["MonthlyIncome"] / CreditLinesSafe
+    IncomePerCreditLine = MonthlyIncomeFilled / CreditLinesSafe
 
     AgeRisk = np.where(AgeSafe < 25, 1.0,
                  np.where(AgeSafe < 35, 0.8,
@@ -48,7 +56,7 @@ def engineer_features(df):
         NumberOfTime6089DaysPastDueNotWorse * 2 +
         NumberOfTimes90DaysLate * 3
     )
-
+    
     UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
 
     HasAnyDelinquency = (TotalPastDueCapped > 0).astype(int)
@@ -56,7 +64,6 @@ def engineer_features(df):
     df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
 
     df_e["DelinquencyScore"] = DelinquencyScore
-    df_e["DelinquencyDensity"] = TotalPastDue / AgeSafe
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
         (NumberOfTimes90DaysLate > 0)
@@ -66,11 +73,13 @@ def engineer_features(df):
     df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLog / CreditLinesSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
-           
-    df_e["PaymentStress"] = df_e["DebtRatio"] * RevolvingUtilizationFilled
+
+    df_e["RealEstateLeverage"] = NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLog
+    
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
-    
+
+    df_e["AgeNormalizedDelinquency"] = DelinquencyScore / AgeSafe
     df_e["HighAgeRiskFlag"] = (AgeRisk <= 0.4).astype(int)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
@@ -87,18 +96,18 @@ def engineer_features(df):
 
     engineered_cols = [
         "DelinquencyScore",
-        "DelinquencyDensity",
         "HasMajorDelinquency",
+        "AgeNormalizedDelinquency",
+        "RealEstateLeverage",
         "UtilizationPerAge",
         "IncomePerCreditLine",
         "LatePaymentsPerCreditLine",
         "DebtToIncomeAgeRisk",
-        "PaymentStress",
         "UtilizationBucketLateBucket",
         "UtilizationPerCreditLine",
         "UtilizationTimesDelinquency",
         "HighAgeRiskFlag",
-        "RevolvingUtilizationCappedLog"
+        "RevolvingUtilizationCappedLog",
     ]
 
     engineered_df = df_e[engineered_cols]
