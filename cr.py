@@ -594,8 +594,6 @@ df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
 
 df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].reset_index(drop=True) 
 
-df_train = df_train[df_train['age'] > 0].reset_index(drop=True)
-
 df_train.describe()
 
 
