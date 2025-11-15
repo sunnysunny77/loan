@@ -62,8 +62,6 @@ def engineer_features(df):
     
     UtilizationPerAge = RevolvingUtilizationCappedLogSafe / AgeSafe
 
-    HasAnyDelinquency = (TotalPastDueLog > 0).astype(int)
-
     df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
     df_e["TotalPastDue"] = TotalPastDueLog
 
