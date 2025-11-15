@@ -37,7 +37,7 @@ lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 1
+num_runs = 2
 max_patience = 13
 
 # pd 
@@ -192,7 +192,6 @@ def engineer_features(df):
         + NumberOfTime6089DaysPastDueNotWorse
     )
 
-    TotalPastDueCapped = TotalPastDue.clip(upper=10)
 
     RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
     RevolvingUtilizationFilled = RevolvingUtilizationCapped.fillna(0)
@@ -202,9 +201,7 @@ def engineer_features(df):
 
     DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
 
-    DebtRatioFilled = DebtRatioCapped.fillna(0)
-
-    MonthlyIncomeFilled = df_e["MonthlyIncome"].fillna(0)
+    DebtRatioSafe = DebtRatioCapped.replace(0, np.nan)
 
     MonthlyIncomeSafe = df_e["MonthlyIncome"].replace(0, np.nan)
 
@@ -212,9 +209,9 @@ def engineer_features(df):
 
     NumberRealEstateLoansOrLinesfilled = df_e["NumberRealEstateLoansOrLines"].fillna(0)
 
-    DebtToIncome = DebtRatioFilled * MonthlyIncomeFilled
+    DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
 
-    IncomePerCreditLine = MonthlyIncomeFilled / CreditLinesSafe
+    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
 
     AgeRisk = np.where(AgeSafe < 25, 1.0,
                  np.where(AgeSafe < 35, 0.8,
@@ -228,10 +225,11 @@ def engineer_features(df):
 
     UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
 
-    HasAnyDelinquency = (TotalPastDueCapped > 0).astype(int)
+    HasAnyDelinquency = (TotalPastDue > 0).astype(int)
 
     df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
 
+    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["DelinquencyScore"] = DelinquencyScore
     df_e["HasMajorDelinquency"] = (
         (NumberOfTime6089DaysPastDueNotWorse > 0) |
@@ -264,6 +262,7 @@ def engineer_features(df):
     )
 
     engineered_cols = [
+        "HasAnyDelinquency",
         "DelinquencyScore",
         "HasMajorDelinquency",
         "AgeNormalizedDelinquency",
@@ -376,28 +375,28 @@ def select_features(df, target, n_to_keep=10):
     X_train = X_train.astype(np.float32)
 
     best_param = {
-        "objective": "binary:logistic",
-        "eval_metric": "auc",
-        "scale_pos_weight": sum(y_train == 0) / sum(y_train == 1),
-        "learning_rate": 0.012,        
-        "n_estimators": 2000,          
+        "learning_rate": 0.01,              
         "max_depth": 6,              
-        "min_child_weight": 8,         
-        "gamma": 0.5,                 
-        "subsample": 0.85,             
-        "colsample_bytree": 0.85,     
-        "reg_alpha": 3,               
-        "reg_lambda": 6,               
-        "max_bin": 1024,              
-        "booster": "gbtree",
-        "random_state": 42,
-        "n_jobs": -1,
-        "tree_method": "hist",    
-        "device": "cuda",
+        'min_child_weight': 6,
+        "gamma": 1.0,                 
+        'subsample': 0.85,            
+        "colsample_bytree": 0.9,     
+        'reg_alpha': 1,            
+        'reg_lambda': 4                       
     }
 
     model = xgb.XGBClassifier(
         **best_param,
+        objective="binary:logistic",
+        eval_metric="auc",
+        scale_pos_weight=sum(y_train == 0) / sum(y_train == 1),
+        n_estimators=800,
+        max_bin=1024,
+        booster="gbtree",
+        random_state=42,
+        n_jobs=-1,
+        tree_method="hist",
+        device="cuda",
     )
 
     model.fit(X_train, y_train, verbose=False)
@@ -669,7 +668,7 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=13)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
 
 
 # In[16]:
@@ -742,6 +741,7 @@ zero_importance_cols = [
     "WasHighAgeRiskFlagImputed",         
     "WasAgeNormalizedDelinquencyImputed",
     "WasHasMajorDelinquencyImputed",
+    "WasHasAnyDelinquencyImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -1011,7 +1011,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[38]:
+# In[27]:
 
 
 # Evaluation
@@ -1114,7 +1114,7 @@ print("Best AUC:", best_auc)
 print("Best params:", best_params)
 
 
-# In[36]:
+# In[35]:
 
 
 # Evaluation
@@ -1123,7 +1123,7 @@ y_probs = model_b.get_booster().predict(dtest)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.70)
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.71)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -1150,7 +1150,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[30]:
+# In[36]:
 
 
 # Shap xgb
@@ -1167,7 +1167,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[31]:
+# In[37]:
 
 
 # Shap NN
@@ -1197,21 +1197,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[39]:
+# In[38]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[40]:
+# In[39]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[41]:
+# In[40]:
 
 
 # Save for hosting
