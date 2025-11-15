@@ -7593,7 +7593,6 @@ a.anchor-link {
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScoreLog</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScoreUtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScoreLog</span> <span class="o">*</span> <span class="n">UtilizationPerAge</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScoreRevolvingUtilization"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScoreLog</span> <span class="o">*</span> <span class="n">RevolvingUtilizationCappedLogSafe</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">UtilizationPerAge</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationCappedLogSafe</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
@@ -7603,8 +7602,7 @@ a.anchor-link {
     
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">IncomePerCreditLine</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtToIncomeAgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtToIncomeAgeRisk</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtToIncomeAgeRiskRevolvingUtilization"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtToIncomeAgeRisk</span> <span class="o">*</span> <span class="n">RevolvingUtilizationCappedLogSafe</span>
-    
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"CreditLinesSafeAgeSafe"</span><span class="p">]</span> <span class="o">=</span> <span class="n">CreditLinesSafe</span> <span class="o">/</span> <span class="n">AgeSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerCreditLineAgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">IncomePerCreditLine</span> <span class="o">*</span> <span class="n">AgeRisk</span> 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilizationAgeRisk"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationCappedLogSafe</span> <span class="o">*</span> <span class="n">AgeRisk</span> 
 
@@ -7625,7 +7623,6 @@ a.anchor-link {
         <span class="s2">"RevolvingUtilization"</span><span class="p">,</span>
         <span class="s2">"MonthlyIncomeSafe"</span><span class="p">,</span>
         <span class="s2">"DelinquencyScoreUtilizationPerAge"</span><span class="p">,</span>
-        <span class="s2">"DelinquencyScoreRevolvingUtilization"</span><span class="p">,</span>
         <span class="s2">"DelinquencyScore"</span><span class="p">,</span>
         <span class="s2">"RealEstateLeverage"</span><span class="p">,</span>
         <span class="s2">"UtilizationPerAge"</span><span class="p">,</span>
@@ -7634,9 +7631,9 @@ a.anchor-link {
         <span class="s2">"DebtToIncomeAgeRisk"</span><span class="p">,</span>
         <span class="s2">"UtilizationBucketLateBucket"</span><span class="p">,</span>
         <span class="s2">"UtilizationPerCreditLine"</span><span class="p">,</span>
-        <span class="s2">"DebtToIncomeAgeRiskRevolvingUtilization"</span><span class="p">,</span>
         <span class="s2">"IncomePerCreditLineAgeRisk"</span><span class="p">,</span>
         <span class="s2">"RevolvingUtilizationAgeRisk"</span><span class="p">,</span>
+        <span class="s2">"CreditLinesSafeAgeSafe"</span><span class="p">,</span>
     <span class="p">]</span>
 
     <span class="n">engineered_df</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="n">engineered_cols</span><span class="p">]</span>

@@ -73,7 +73,6 @@ def engineer_features(df):
     df_e["DelinquencyScore"] = DelinquencyScoreLog
 
     df_e["DelinquencyScoreUtilizationPerAge"] = DelinquencyScoreLog * UtilizationPerAge
-    df_e["DelinquencyScoreRevolvingUtilization"] = DelinquencyScoreLog * RevolvingUtilizationCappedLogSafe
 
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLogSafe / CreditLinesSafe
@@ -83,8 +82,7 @@ def engineer_features(df):
     
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncomeAgeRisk
-    df_e["DebtToIncomeAgeRiskRevolvingUtilization"] = DebtToIncomeAgeRisk * RevolvingUtilizationCappedLogSafe
-    
+    df_e["CreditLinesSafeAgeSafe"] = CreditLinesSafe / AgeSafe
     df_e["IncomePerCreditLineAgeRisk"] = IncomePerCreditLine * AgeRisk 
     df_e["RevolvingUtilizationAgeRisk"] = RevolvingUtilizationCappedLogSafe * AgeRisk 
 
@@ -105,7 +103,6 @@ def engineer_features(df):
         "RevolvingUtilization",
         "MonthlyIncomeSafe",
         "DelinquencyScoreUtilizationPerAge",
-        "DelinquencyScoreRevolvingUtilization",
         "DelinquencyScore",
         "RealEstateLeverage",
         "UtilizationPerAge",
@@ -114,9 +111,9 @@ def engineer_features(df):
         "DebtToIncomeAgeRisk",
         "UtilizationBucketLateBucket",
         "UtilizationPerCreditLine",
-        "DebtToIncomeAgeRiskRevolvingUtilization",
         "IncomePerCreditLineAgeRisk",
         "RevolvingUtilizationAgeRisk",
+        "CreditLinesSafeAgeSafe",
     ]
 
     engineered_df = df_e[engineered_cols]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[38]:
 
 
 # Imports
@@ -37,7 +37,7 @@ lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 2
+num_runs = 1
 max_patience = 13
 
 # pd 
@@ -47,7 +47,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[2]:
+# In[39]:
 
 
 def load_datasets(base_path="./"):
@@ -283,8 +283,6 @@ def select_features(df, target, n_to_keep=10):
         objective="binary:logistic",
         eval_metric="auc",
         scale_pos_weight=sum(y_train == 0) / sum(y_train == 1),
-        n_estimators=800,
-        max_bin=1024,
         booster="gbtree",
         random_state=42,
         n_jobs=-1,
@@ -448,7 +446,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[3]:
+# In[90]:
 
 
 def engineer_features(df):
@@ -515,7 +513,6 @@ def engineer_features(df):
     df_e["DelinquencyScore"] = DelinquencyScoreLog
 
     df_e["DelinquencyScoreUtilizationPerAge"] = DelinquencyScoreLog * UtilizationPerAge
-    df_e["DelinquencyScoreRevolvingUtilization"] = DelinquencyScoreLog * RevolvingUtilizationCappedLogSafe
 
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLogSafe / CreditLinesSafe
@@ -525,8 +522,7 @@ def engineer_features(df):
 
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncomeAgeRisk
-    df_e["DebtToIncomeAgeRiskRevolvingUtilization"] = DebtToIncomeAgeRisk * RevolvingUtilizationCappedLogSafe
-
+    df_e["CreditLinesSafeAgeSafe"] = CreditLinesSafe / AgeSafe
     df_e["IncomePerCreditLineAgeRisk"] = IncomePerCreditLine * AgeRisk 
     df_e["RevolvingUtilizationAgeRisk"] = RevolvingUtilizationCappedLogSafe * AgeRisk 
 
@@ -547,7 +543,6 @@ def engineer_features(df):
         "RevolvingUtilization",
         "MonthlyIncomeSafe",
         "DelinquencyScoreUtilizationPerAge",
-        "DelinquencyScoreRevolvingUtilization",
         "DelinquencyScore",
         "RealEstateLeverage",
         "UtilizationPerAge",
@@ -556,9 +551,9 @@ def engineer_features(df):
         "DebtToIncomeAgeRisk",
         "UtilizationBucketLateBucket",
         "UtilizationPerCreditLine",
-        "DebtToIncomeAgeRiskRevolvingUtilization",
         "IncomePerCreditLineAgeRisk",
         "RevolvingUtilizationAgeRisk",
+        "CreditLinesSafeAgeSafe",
     ]
 
     engineered_df = df_e[engineered_cols]
@@ -569,7 +564,7 @@ def engineer_features(df):
     return engineered_df
 
 
-# In[4]:
+# In[91]:
 
 
 # Load datasets
@@ -577,14 +572,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[5]:
+# In[92]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[6]:
+# In[93]:
 
 
 # Outlier Handling Manual
@@ -597,7 +592,7 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_train.describe()
 
 
-# In[7]:
+# In[94]:
 
 
 # Select targets
@@ -605,14 +600,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[8]:
+# In[95]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[9]:
+# In[96]:
 
 
 # Split train/test
@@ -634,7 +629,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[10]:
+# In[97]:
 
 
 # Drop duplicates
@@ -642,48 +637,48 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[11]:
+# In[98]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[12]:
+# In[99]:
 
 
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[13]:
+# In[100]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[14]:
+# In[101]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[15]:
+# In[102]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
 
 
-# In[16]:
+# In[104]:
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=17)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=15)
 
 
-# In[17]:
+# In[105]:
 
 
 # Impute and scale
@@ -695,7 +690,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[18]:
+# In[106]:
 
 
 # Process
@@ -732,14 +727,14 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[19]:
+# In[107]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[20]:
+# In[108]:
 
 
 # Zero importance cols entered after running
@@ -749,7 +744,9 @@ zero_importance_cols = [
     "WasIncomePerCreditLineImputed",      
     "WasDelinquencyScoreImputed",
     "WasUtilizationPerAgeImputed",
+    "WasCreditLinesSafeAgeSafeImputed",
 ]
+
 X_train = X_train.drop(columns=zero_importance_cols)
 X_val = X_val.drop(columns=zero_importance_cols)
 X_test = X_test.drop(columns=zero_importance_cols)
@@ -762,7 +759,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[21]:
+# In[109]:
 
 
 # Encode
@@ -804,7 +801,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[22]:
+# In[110]:
 
 
 # Cast
@@ -819,7 +816,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[23]:
+# In[111]:
 
 
 # Convert to tensors
@@ -840,7 +837,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[24]:
+# In[112]:
 
 
 # Datasets
@@ -854,7 +851,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[25]:
+# In[113]:
 
 
 # Model
@@ -904,14 +901,14 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[26]:
+# In[114]:
 
 
 # Loss
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-# In[27]:
+# In[115]:
 
 
 # Train
@@ -997,7 +994,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[36]:
+# In[118]:
 
 
 # Evaluation
@@ -1013,7 +1010,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.68)
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.67)
 
 y_test_probs = []
 with torch.no_grad():
@@ -1050,19 +1047,20 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[29]:
+# In[119]:
 
 
 param_dist = {
-    "booster": ["gbtree"],                
-    "learning_rate": [0.005, 0.008, 0.01], 
-    "max_depth": [4, 6, 8],               
-    "min_child_weight": [6, 10, 12],    
-    "gamma": [0.0, 0.5, 1.0],              
-    "subsample": [0.65, 0.75, 0.85],       
-    "colsample_bytree": [0.65, 0.75, 0.85],
-    "reg_alpha": [0, 2, 5, 8],          
-    "reg_lambda": [2, 6, 10],        
+    "booster": ["gbtree"],              
+    "learning_rate": [0.02, 0.03],      
+    "n_estimators": [400, 500, 600],    
+    "max_depth": [6, 7],                 
+    "min_child_weight": [6, 8],       
+    "subsample": [0.8, 0.9],           
+    "colsample_bytree": [0.8, 1.0],      
+    "gamma": [0],                         
+    "reg_alpha": [0.25, 0.5],         
+    "reg_lambda": [4, 5],               
 }
 
 n_iter = 4  
@@ -1077,8 +1075,7 @@ for i, params in enumerate(sampler, start=1):
         objective="binary:logistic",
         eval_metric="auc",
         scale_pos_weight=sum(y_train == 0) / sum(y_train == 1),
-        n_estimators=800,
-        max_bin=1024,
+        max_bin=256,
         random_state=42,
         n_jobs=-1,
         tree_method="hist",
@@ -1100,7 +1097,7 @@ print("Best AUC:", best_auc)
 print("Best params:", best_params)
 
 
-# In[30]:
+# In[120]:
 
 
 # Evaluation
@@ -1136,7 +1133,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[31]:
+# In[121]:
 
 
 # Shap xgb
@@ -1153,7 +1150,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[32]:
+# In[122]:
 
 
 # Shap NN
@@ -1183,21 +1180,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[37]:
+# In[126]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[38]:
+# In[127]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[39]:
+# In[128]:
 
 
 # Save for hosting
