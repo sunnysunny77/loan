@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[38]:
+# In[1]:
 
 
 # Imports
@@ -37,7 +37,7 @@ lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 1
+num_runs = 2
 max_patience = 13
 
 # pd 
@@ -47,7 +47,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[39]:
+# In[2]:
 
 
 def load_datasets(base_path="./"):
@@ -231,18 +231,31 @@ def collapse_rare_categories(df, threshold=0.005):
     df_copy = df.copy()
 
     cat_cols = df_copy.select_dtypes(include=['object', 'category']).columns.tolist()
-
     rare_maps = {}
 
     for col in cat_cols:
+        print(f"Column: {col}")
+
         freqs = df_copy[col].value_counts(normalize=True, dropna=True)
-        rare_cats = [c for c in freqs[freqs < threshold].index]
+        counts = df_copy[col].value_counts(dropna=True)
+
+        sorted_cats = freqs.sort_values(ascending=False)
+        for cat, pct in sorted_cats.items():
+            print(f" {cat}: {pct*100:.2f}%")
+
+        rare_cats = sorted_cats[sorted_cats < threshold].index.tolist()
+
         if rare_cats:
-            df_copy[col] = df_copy[col].astype('object').replace(rare_cats, 'Other')
             rare_maps[col] = set(rare_cats)
-            print(f"Column '{col}': collapsed {len(rare_cats)} rare categories: {rare_cats}")
+
+            print(f"Rare Categories (< {threshold*100:.2f}%) --")
+            for cat in rare_cats:
+                print(f" - {cat}")
+
+            df_copy[col] = df_copy[col].astype("object").replace(rare_cats, "Other")
+
         else:
-            print(f"Column '{col}': no rare categories to collapse")
+            print(f"No rare categories (< {threshold*100:.2f}%) --")
 
     return df_copy, rare_maps
 
@@ -446,7 +459,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[90]:
+# In[3]:
 
 
 def engineer_features(df):
@@ -512,8 +525,6 @@ def engineer_features(df):
 
     df_e["DelinquencyScore"] = DelinquencyScoreLog
 
-    df_e["DelinquencyScoreUtilizationPerAge"] = DelinquencyScoreLog * UtilizationPerAge
-
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLogSafe / CreditLinesSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe 
@@ -542,7 +553,6 @@ def engineer_features(df):
         "DebtRatio",
         "RevolvingUtilization",
         "MonthlyIncomeSafe",
-        "DelinquencyScoreUtilizationPerAge",
         "DelinquencyScore",
         "RealEstateLeverage",
         "UtilizationPerAge",
@@ -564,7 +574,7 @@ def engineer_features(df):
     return engineered_df
 
 
-# In[91]:
+# In[4]:
 
 
 # Load datasets
@@ -572,14 +582,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[92]:
+# In[5]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[93]:
+# In[6]:
 
 
 # Outlier Handling Manual
@@ -592,7 +602,7 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_train.describe()
 
 
-# In[94]:
+# In[7]:
 
 
 # Select targets
@@ -600,14 +610,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[95]:
+# In[8]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[96]:
+# In[9]:
 
 
 # Split train/test
@@ -629,7 +639,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[97]:
+# In[10]:
 
 
 # Drop duplicates
@@ -637,48 +647,48 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[98]:
+# In[11]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[99]:
+# In[12]:
 
 
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[100]:
+# In[13]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[101]:
+# In[14]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
 
 
-# In[102]:
+# In[15]:
 
 
 # Collapse rare categories
-df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.05)
+df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
-# In[104]:
+# In[16]:
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=15)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
 
 
-# In[105]:
+# In[17]:
 
 
 # Impute and scale
@@ -690,7 +700,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[106]:
+# In[18]:
 
 
 # Process
@@ -727,14 +737,14 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[107]:
+# In[19]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[108]:
+# In[20]:
 
 
 # Zero importance cols entered after running
@@ -759,7 +769,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[109]:
+# In[21]:
 
 
 # Encode
@@ -801,7 +811,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[110]:
+# In[22]:
 
 
 # Cast
@@ -816,7 +826,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[111]:
+# In[23]:
 
 
 # Convert to tensors
@@ -837,7 +847,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[112]:
+# In[24]:
 
 
 # Datasets
@@ -851,7 +861,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[113]:
+# In[25]:
 
 
 # Model
@@ -901,14 +911,14 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[114]:
+# In[26]:
 
 
 # Loss
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-# In[115]:
+# In[27]:
 
 
 # Train
@@ -994,7 +1004,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[118]:
+# In[36]:
 
 
 # Evaluation
@@ -1047,7 +1057,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[119]:
+# In[29]:
 
 
 param_dist = {
@@ -1097,7 +1107,7 @@ print("Best AUC:", best_auc)
 print("Best params:", best_params)
 
 
-# In[120]:
+# In[30]:
 
 
 # Evaluation
@@ -1133,7 +1143,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[121]:
+# In[31]:
 
 
 # Shap xgb
@@ -1150,7 +1160,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[122]:
+# In[32]:
 
 
 # Shap NN
@@ -1180,21 +1190,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[126]:
+# In[37]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[127]:
+# In[38]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[128]:
+# In[39]:
 
 
 # Save for hosting

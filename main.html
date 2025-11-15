@@ -7592,8 +7592,6 @@ a.anchor-link {
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScoreLog</span>
 
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScoreUtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScoreLog</span> <span class="o">*</span> <span class="n">UtilizationPerAge</span>
-
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">UtilizationPerAge</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"UtilizationPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationCappedLogSafe</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDueLog</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span> 
@@ -7622,7 +7620,6 @@ a.anchor-link {
         <span class="s2">"DebtRatio"</span><span class="p">,</span>
         <span class="s2">"RevolvingUtilization"</span><span class="p">,</span>
         <span class="s2">"MonthlyIncomeSafe"</span><span class="p">,</span>
-        <span class="s2">"DelinquencyScoreUtilizationPerAge"</span><span class="p">,</span>
         <span class="s2">"DelinquencyScore"</span><span class="p">,</span>
         <span class="s2">"RealEstateLeverage"</span><span class="p">,</span>
         <span class="s2">"UtilizationPerAge"</span><span class="p">,</span>

@@ -72,8 +72,6 @@ def engineer_features(df):
 
     df_e["DelinquencyScore"] = DelinquencyScoreLog
 
-    df_e["DelinquencyScoreUtilizationPerAge"] = DelinquencyScoreLog * UtilizationPerAge
-
     df_e["UtilizationPerAge"] = UtilizationPerAge
     df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLogSafe / CreditLinesSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe 
@@ -102,7 +100,6 @@ def engineer_features(df):
         "DebtRatio",
         "RevolvingUtilization",
         "MonthlyIncomeSafe",
-        "DelinquencyScoreUtilizationPerAge",
         "DelinquencyScore",
         "RealEstateLeverage",
         "UtilizationPerAge",
