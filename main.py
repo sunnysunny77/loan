@@ -22,19 +22,25 @@ def engineer_features(df):
         + NumberOfTimes90DaysLate
         + NumberOfTime6089DaysPastDueNotWorse
     )
-
+    
+    TotalPastDueLog = np.log1p(TotalPastDue)
     
     RevolvingUtilizationCapped = df_e["RevolvingUtilizationOfUnsecuredLines"].clip(upper=5.0)
     RevolvingUtilizationFilled = RevolvingUtilizationCapped.fillna(0)
-    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationFilled).replace(0, np.nan)
+    RevolvingUtilizationCappedLog = np.log1p(RevolvingUtilizationFilled)
+    RevolvingUtilizationCappedLogSafe = RevolvingUtilizationCappedLog.replace(0, np.nan)
         
     AgeSafe = df_e["age"].replace(0, np.nan)
 
-    DebtRatioCapped = df_e["DebtRatio"].clip(upper=10000.0)
+    DebtRatioCapped = df_e["DebtRatio"].fillna(0).clip(upper=10000.0)
+        
+    DebtRatioCappedLog = np.log1p(DebtRatioCapped)
+    
+    DebtRatioSafe =  DebtRatioCappedLog.replace(0, np.nan)
 
-    DebtRatioSafe = DebtRatioCapped.replace(0, np.nan)
+    MonthlyIncomeLog = np.log1p(df_e["MonthlyIncome"].fillna(0))
 
-    MonthlyIncomeSafe = df_e["MonthlyIncome"].replace(0, np.nan)
+    MonthlyIncomeSafe = MonthlyIncomeLog.replace(0, np.nan)
 
     CreditLinesSafe = df_e["NumberOfOpenCreditLinesAndLoans"].replace(0, np.nan)
 
@@ -54,30 +60,24 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
     
-    UtilizationPerAge = RevolvingUtilizationCappedLog / AgeSafe
+    UtilizationPerAge = RevolvingUtilizationCappedLogSafe / AgeSafe
 
-    HasAnyDelinquency = (TotalPastDue > 0).astype(int)
+    HasAnyDelinquency = (TotalPastDueLog > 0).astype(int)
 
-    df_e["RevolvingUtilizationCappedLog"] = RevolvingUtilizationCappedLog
+    df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
+    df_e["TotalPastDue"] = TotalPastDueLog
 
-    df_e["HasAnyDelinquency"] = HasAnyDelinquency
     df_e["DelinquencyScore"] = DelinquencyScore
-    df_e["HasMajorDelinquency"] = (
-        (NumberOfTime6089DaysPastDueNotWorse > 0) |
-        (NumberOfTimes90DaysLate > 0)
-    ).astype(int)
 
     df_e["UtilizationPerAge"] = UtilizationPerAge
-    df_e["UtilizationTimesDelinquency"] = UtilizationPerAge * HasAnyDelinquency
-    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLog / CreditLinesSafe
-    df_e["LatePaymentsPerCreditLine"] = TotalPastDue / CreditLinesSafe
+    df_e["UtilizationPerCreditLine"] =  RevolvingUtilizationCappedLogSafe / CreditLinesSafe
+    df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe
 
-    df_e["RealEstateLeverage"] = NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLog
+    df_e["RealEstateLeverage"] = NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe
     
     df_e["IncomePerCreditLine"] = IncomePerCreditLine
     df_e["DebtToIncomeAgeRisk"] = DebtToIncome * AgeRisk
 
-    df_e["AgeNormalizedDelinquency"] = DelinquencyScore / AgeSafe
     df_e["HighAgeRiskFlag"] = (AgeRisk <= 0.4).astype(int)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
@@ -86,17 +86,16 @@ def engineer_features(df):
 
     Late_bins = [-1, 0, 1, 3, 6, np.inf]
     Late_labels = ["NoLate", "FewLate", "ModerateLate", "FrequentLate", "ChronicLate"]
-    LatePaymentBucket = pd.cut(TotalPastDue, bins=Late_bins, labels=Late_labels)
+    LatePaymentBucket = pd.cut(TotalPastDueLog, bins=Late_bins, labels=Late_labels)
 
     df_e["UtilizationBucketLateBucket"] = (
         UtilizationBucket.astype(str) + "_" + LatePaymentBucket.astype(str)
     )
 
     engineered_cols = [
-        "HasAnyDelinquency",
+        "RevolvingUtilization",
+        "TotalPastDue",
         "DelinquencyScore",
-        "HasMajorDelinquency",
-        "AgeNormalizedDelinquency",
         "RealEstateLeverage",
         "UtilizationPerAge",
         "IncomePerCreditLine",
@@ -104,9 +103,7 @@ def engineer_features(df):
         "DebtToIncomeAgeRisk",
         "UtilizationBucketLateBucket",
         "UtilizationPerCreditLine",
-        "UtilizationTimesDelinquency",
         "HighAgeRiskFlag",
-        "RevolvingUtilizationCappedLog",
     ]
 
     engineered_df = df_e[engineered_cols]
