@@ -235,27 +235,20 @@ def collapse_rare_categories(df, threshold=0.005):
 
     for col in cat_cols:
         print(f"Column: {col}")
-
         freqs = df_copy[col].value_counts(normalize=True, dropna=True)
-        counts = df_copy[col].value_counts(dropna=True)
 
-        sorted_cats = freqs.sort_values(ascending=False)
-        for cat, pct in sorted_cats.items():
-            print(f" {cat}: {pct*100:.2f}%")
-
-        rare_cats = sorted_cats[sorted_cats < threshold].index.tolist()
+        rare_cats = []
+        for cat, pct in freqs.items():
+            status = "Below" if pct < threshold else "Above"
+            print(f" {cat}: {pct*100:.2f}% ({status})")
+            if pct < threshold:
+                rare_cats.append(cat)
 
         if rare_cats:
             rare_maps[col] = set(rare_cats)
-
-            print(f"Rare Categories (< {threshold*100:.2f}%) --")
-            for cat in rare_cats:
-                print(f" - {cat}")
-
             df_copy[col] = df_copy[col].astype("object").replace(rare_cats, "Other")
-
         else:
-            print(f"No rare categories (< {threshold*100:.2f}%) --")
+            print(" No rare categories")
 
     return df_copy, rare_maps
 
@@ -499,9 +492,9 @@ def engineer_features(df):
 
     NumberRealEstateLoansOrLinesfilled = df_e["NumberRealEstateLoansOrLines"].fillna(0)
 
-    DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
+    NumberRealEstateLoansOrLinesSafe = NumberRealEstateLoansOrLinesfilled.replace(0, np.nan)
 
-    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
+    DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
 
     AgeRisk = np.where(AgeSafe < 25, 1.0,
                  np.where(AgeSafe < 35, 0.8,
@@ -513,29 +506,39 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
 
+    PastDueSeverity = (
+        NumberOfTime3059DaysPastDueNotWorse*1 +
+        NumberOfTime6089DaysPastDueNotWorse*3 +
+        NumberOfTimes90DaysLate*6
+    )
+
+    PastDueSeverityLog = np.log1p(PastDueSeverity)
+
     DelinquencyScoreLog = np.log1p(DelinquencyScore)
 
-    UtilizationPerAge = RevolvingUtilizationCappedLogSafe / AgeSafe
-
-    DebtToIncomeAgeRisk = DebtToIncome * AgeRisk
+    CreditBurdenIndex = (
+        RevolvingUtilizationCappedLogSafe +
+        DebtRatioSafe +
+        2 * DelinquencyScoreLog
+    )
 
     df_e["DebtRatio"] = DebtRatioSafe
-    df_e["MonthlyIncomeSafe"] = MonthlyIncomeSafe 
+    df_e["MonthlyIncome"] = MonthlyIncomeSafe 
     df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
+    df_e["AgeSafe"] = AgeSafe
+    df_e["CreditBurdenIndex"] = CreditBurdenIndex
 
     df_e["DelinquencyScore"] = DelinquencyScoreLog
+    df_e["PastDueSeverity"] = PastDueSeverityLog
 
-    df_e["UtilizationPerAge"] = UtilizationPerAge
-    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLogSafe / CreditLinesSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe 
 
-    df_e["RealEstateLeverage"] = NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe
-
-    df_e["IncomePerCreditLine"] = IncomePerCreditLine
-    df_e["DebtToIncomeAgeRisk"] = DebtToIncomeAgeRisk
-    df_e["CreditLinesSafeAgeSafe"] = CreditLinesSafe / AgeSafe
-    df_e["IncomePerCreditLineAgeRisk"] = IncomePerCreditLine * AgeRisk 
-    df_e["RevolvingUtilizationAgeRisk"] = RevolvingUtilizationCappedLogSafe * AgeRisk 
+    df_e["DebtToIncome"] = DebtToIncome
+    df_e["RealEstateLeveragePerAge"] =  (NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe) / AgeSafe
+    df_e["CreditLinesSafeAge"] =  CreditLinesSafe / AgeSafe
+    df_e["IncomePerAge"] = MonthlyIncomeSafe / AgeSafe
+    df_e["DisposableIncome"] = MonthlyIncomeSafe - (DebtRatioSafe * MonthlyIncomeSafe)
+    df_e["IncomePerDelinquency"] = MonthlyIncomeSafe / (1 + TotalPastDueLog)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -552,18 +555,19 @@ def engineer_features(df):
     engineered_cols = [
         "DebtRatio",
         "RevolvingUtilization",
-        "MonthlyIncomeSafe",
+        "MonthlyIncome",
         "DelinquencyScore",
-        "RealEstateLeverage",
-        "UtilizationPerAge",
-        "IncomePerCreditLine",
         "LatePaymentsPerCreditLine",
-        "DebtToIncomeAgeRisk",
         "UtilizationBucketLateBucket",
-        "UtilizationPerCreditLine",
-        "IncomePerCreditLineAgeRisk",
-        "RevolvingUtilizationAgeRisk",
-        "CreditLinesSafeAgeSafe",
+        "CreditLinesSafeAge",
+        "PastDueSeverity",
+        "RealEstateLeveragePerAge",
+        "AgeSafe",
+        "IncomePerAge",
+        "DebtToIncome",
+        "DisposableIncome",
+        "IncomePerDelinquency",
+        "CreditBurdenIndex",
     ]
 
     engineered_df = df_e[engineered_cols]
@@ -671,7 +675,7 @@ df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
 # Drop high card
-df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=50)
+df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=100)
 
 
 # In[15]:
@@ -685,7 +689,7 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=14)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=15)
 
 
 # In[17]:
@@ -749,12 +753,13 @@ dataset_summary(X_train, y_train)
 
 # Zero importance cols entered after running
 zero_importance_cols = [
-    "WasDebtToIncomeAgeRiskImputed",
-    "WasUtilizationBucketLateBucketImputed",
-    "WasIncomePerCreditLineImputed",      
     "WasDelinquencyScoreImputed",
-    "WasUtilizationPerAgeImputed",
-    "WasCreditLinesSafeAgeSafeImputed",
+    "WasPastDueSeverityImputed",
+    "WasAgeSafeImputed",
+    "WasLatePaymentsPerCreditLineImputed",
+    "WasUtilizationBucketLateBucketImputed",
+    "WasMonthlyIncomeImputed",
+    "WasIncomePerDelinquencyImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -1004,7 +1009,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[36]:
+# In[28]:
 
 
 # Evaluation
@@ -1060,54 +1065,68 @@ plt.show()
 # In[29]:
 
 
-param_dist = {
-    "booster": ["gbtree"],              
-    "learning_rate": [0.02, 0.03],      
-    "n_estimators": [400, 500, 600],    
-    "max_depth": [6, 7],                 
-    "min_child_weight": [6, 8],       
-    "subsample": [0.8, 0.9],           
-    "colsample_bytree": [0.8, 1.0],      
-    "gamma": [0],                         
-    "reg_alpha": [0.25, 0.5],         
-    "reg_lambda": [4, 5],               
-}
+def xgb_booster(X_train, y_train, X_val, y_val):
 
-n_iter = 4  
-sampler = ParameterSampler(param_dist, n_iter=n_iter, random_state=42)
+    param_dist = {
+        "booster": ["gbtree"],
+        "learning_rate": np.logspace(-3, -0.3, 7),   
+        "n_estimators": [300, 600, 900, 1200],
+        "max_depth": [3, 4, 5, 6, 8],
+        "min_child_weight": [1, 2, 5, 10],
+        "gamma": np.linspace(0, 5, 6),
+        "subsample": np.linspace(0.6, 1.0, 5),
+        "colsample_bytree": np.linspace(0.6, 1.0, 5),
+        "reg_alpha": np.logspace(-4, 1, 6),   
+        "reg_lambda": np.logspace(-3, 1, 6), 
+    }
 
-best_auc, best_params = 0.0, None
+    n_iter = 10
+    sampler = ParameterSampler(param_dist, n_iter=n_iter, random_state=42)
 
-for i, params in enumerate(sampler, start=1):
-    print(f"[INFO] Running model {i}/{len(sampler)} with params: {params}")
+    best_auc = -np.inf
+    best_model = None
+    best_params = None
 
-    model_b = xgb.XGBClassifier(
-        objective="binary:logistic",
-        eval_metric="auc",
-        scale_pos_weight=sum(y_train == 0) / sum(y_train == 1),
-        max_bin=256,
-        random_state=42,
-        n_jobs=-1,
-        tree_method="hist",
-        device="cuda",
-        early_stopping_rounds=100,
-        **params
-    )
+    for i, params in enumerate(sampler, start=1):
 
-    model_b.fit(
-        X_train_xgb, y_train,
-        eval_set=[(X_val_xgb, y_val)],
-        verbose=False
-    )
+        print(f"Running booster model {i}/{n_iter} with params: {params}")
 
-    if model_b.best_score > best_auc:
-        best_auc, best_params = model_b.best_score, params
+        model_b = xgb.XGBClassifier(
+            objective="binary:logistic",
+            eval_metric="auc",
+            scale_pos_weight=sum(y_train == 0) / sum(y_train == 1),
+            random_state=42,
+            n_jobs=-1,
+            tree_method="hist",
+            device="cuda",
+            early_stopping_rounds=100,
+            **params
+        )
 
-print("Best AUC:", best_auc)
-print("Best params:", best_params)
+        model_b.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            verbose=False
+        )
+
+        if model_b.best_score > best_auc:
+            best_auc = model_b.best_score
+            best_params = params
+            best_model = model_b 
+
+    print("Best AUC:", best_auc)
+    print("Best params:", best_params)
+
+    return best_model
 
 
 # In[30]:
+
+
+model_b = xgb_booster(X_train_xgb, y_train, X_val_xgb, y_val)
+
+
+# In[31]:
 
 
 # Evaluation
@@ -1143,7 +1162,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[31]:
+# In[32]:
 
 
 # Shap xgb
@@ -1160,7 +1179,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[32]:
+# In[33]:
 
 
 # Shap NN
@@ -1190,21 +1209,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[37]:
+# In[34]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[38]:
+# In[35]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[39]:
+# In[36]:
 
 
 # Save for hosting

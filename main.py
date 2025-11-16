@@ -93,8 +93,6 @@ def engineer_features(df):
     df_e["IncomePerAge"] = MonthlyIncomeSafe / AgeSafe
     df_e["DisposableIncome"] = MonthlyIncomeSafe - (DebtRatioSafe * MonthlyIncomeSafe)
     df_e["IncomePerDelinquency"] = MonthlyIncomeSafe / (1 + TotalPastDueLog)
-    df_e["DebtPerAge"] = DebtRatioSafe / AgeSafe
-    df_e["AgeDelinquencyInteraction"] = DelinquencyScoreLog / AgeSafe
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -123,9 +121,7 @@ def engineer_features(df):
         "DebtToIncome",
         "DisposableIncome",
         "IncomePerDelinquency",
-        "DebtPerAge",
         "CreditBurdenIndex",
-        "AgeDelinquencyInteraction",
     ]
 
     engineered_df = df_e[engineered_cols]
