@@ -46,9 +46,9 @@ def engineer_features(df):
 
     NumberRealEstateLoansOrLinesfilled = df_e["NumberRealEstateLoansOrLines"].fillna(0)
 
+    NumberRealEstateLoansOrLinesSafe = NumberRealEstateLoansOrLinesfilled.replace(0, np.nan)
+
     DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
-    
-    IncomePerCreditLine = MonthlyIncomeSafe / CreditLinesSafe
 
     AgeRisk = np.where(AgeSafe < 25, 1.0,
                  np.where(AgeSafe < 35, 0.8,
@@ -60,29 +60,41 @@ def engineer_features(df):
         NumberOfTimes90DaysLate * 3
     )
 
-    DelinquencyScoreLog = np.log1p(DelinquencyScore)
-    
-    UtilizationPerAge = RevolvingUtilizationCappedLogSafe / AgeSafe
+    PastDueSeverity = (
+        NumberOfTime3059DaysPastDueNotWorse*1 +
+        NumberOfTime6089DaysPastDueNotWorse*3 +
+        NumberOfTimes90DaysLate*6
+    )
 
-    DebtToIncomeAgeRisk = DebtToIncome * AgeRisk
+    PastDueSeverityLog = np.log1p(PastDueSeverity)
+
+    DelinquencyScoreLog = np.log1p(DelinquencyScore)
+
+    CreditBurdenIndex = (
+        RevolvingUtilizationCappedLogSafe +
+        DebtRatioSafe +
+        2 * DelinquencyScoreLog
+    )
 
     df_e["DebtRatio"] = DebtRatioSafe
-    df_e["MonthlyIncomeSafe"] = MonthlyIncomeSafe 
+    df_e["MonthlyIncome"] = MonthlyIncomeSafe 
     df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
+    df_e["AgeSafe"] = AgeSafe
+    df_e["CreditBurdenIndex"] = CreditBurdenIndex
 
     df_e["DelinquencyScore"] = DelinquencyScoreLog
+    df_e["PastDueSeverity"] = PastDueSeverityLog
 
-    df_e["UtilizationPerAge"] = UtilizationPerAge
-    df_e["UtilizationPerCreditLine"] = RevolvingUtilizationCappedLogSafe / CreditLinesSafe
     df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe 
 
-    df_e["RealEstateLeverage"] = NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe
-    
-    df_e["IncomePerCreditLine"] = IncomePerCreditLine
-    df_e["DebtToIncomeAgeRisk"] = DebtToIncomeAgeRisk
-    df_e["CreditLinesSafeAgeSafe"] = CreditLinesSafe / AgeSafe
-    df_e["IncomePerCreditLineAgeRisk"] = IncomePerCreditLine * AgeRisk 
-    df_e["RevolvingUtilizationAgeRisk"] = RevolvingUtilizationCappedLogSafe * AgeRisk 
+    df_e["DebtToIncome"] = DebtToIncome
+    df_e["RealEstateLeveragePerAge"] =  (NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe) / AgeSafe
+    df_e["CreditLinesSafeAge"] =  CreditLinesSafe / AgeSafe
+    df_e["IncomePerAge"] = MonthlyIncomeSafe / AgeSafe
+    df_e["DisposableIncome"] = MonthlyIncomeSafe - (DebtRatioSafe * MonthlyIncomeSafe)
+    df_e["IncomePerDelinquency"] = MonthlyIncomeSafe / (1 + TotalPastDueLog)
+    df_e["DebtPerAge"] = DebtRatioSafe / AgeSafe
+    df_e["AgeDelinquencyInteraction"] = DelinquencyScoreLog / AgeSafe
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -99,18 +111,21 @@ def engineer_features(df):
     engineered_cols = [
         "DebtRatio",
         "RevolvingUtilization",
-        "MonthlyIncomeSafe",
+        "MonthlyIncome",
         "DelinquencyScore",
-        "RealEstateLeverage",
-        "UtilizationPerAge",
-        "IncomePerCreditLine",
         "LatePaymentsPerCreditLine",
-        "DebtToIncomeAgeRisk",
         "UtilizationBucketLateBucket",
-        "UtilizationPerCreditLine",
-        "IncomePerCreditLineAgeRisk",
-        "RevolvingUtilizationAgeRisk",
-        "CreditLinesSafeAgeSafe",
+        "CreditLinesSafeAge",
+        "PastDueSeverity",
+        "RealEstateLeveragePerAge",
+        "AgeSafe",
+        "IncomePerAge",
+        "DebtToIncome",
+        "DisposableIncome",
+        "IncomePerDelinquency",
+        "DebtPerAge",
+        "CreditBurdenIndex",
+        "AgeDelinquencyInteraction",
     ]
 
     engineered_df = df_e[engineered_cols]
