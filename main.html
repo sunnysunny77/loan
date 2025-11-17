@@ -7566,13 +7566,7 @@ a.anchor-link {
 
     <span class="n">NumberRealEstateLoansOrLinesfilled</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="s2">"NumberRealEstateLoansOrLines"</span><span class="p">]</span><span class="o">.</span><span class="n">fillna</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
-    <span class="n">NumberRealEstateLoansOrLinesSafe</span> <span class="o">=</span> <span class="n">NumberRealEstateLoansOrLinesfilled</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
-
     <span class="n">DebtToIncome</span> <span class="o">=</span> <span class="n">DebtRatioSafe</span> <span class="o">*</span> <span class="n">MonthlyIncomeSafe</span>
-
-    <span class="n">AgeRisk</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">AgeSafe</span> <span class="o">&lt;</span> <span class="mi">25</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span>
-                 <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">AgeSafe</span> <span class="o">&lt;</span> <span class="mi">35</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span>
-                 <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">AgeSafe</span> <span class="o">&lt;</span> <span class="mi">50</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">)))</span>
 
     <span class="n">DelinquencyScore</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">NumberOfTime3059DaysPastDueNotWorse</span> <span class="o">+</span>
@@ -7596,23 +7590,27 @@ a.anchor-link {
         <span class="mi">2</span> <span class="o">*</span> <span class="n">DelinquencyScoreLog</span>
     <span class="p">)</span>
 
+    <span class="n">RepaymentCapacity</span> <span class="o">=</span> <span class="n">MonthlyIncomeSafe</span> <span class="o">-</span> <span class="p">(</span>
+        <span class="n">DebtRatioSafe</span> <span class="o">*</span> <span class="n">MonthlyIncomeSafe</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">PastDueSeverityLog</span>
+    <span class="p">)</span>
+    
+
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtRatio"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtRatioSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"MonthlyIncome"</span><span class="p">]</span> <span class="o">=</span> <span class="n">MonthlyIncomeSafe</span> 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"RevolvingUtilization"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RevolvingUtilizationCappedLogSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"AgeSafe"</span><span class="p">]</span> <span class="o">=</span> <span class="n">AgeSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"CreditBurdenIndex"</span><span class="p">]</span> <span class="o">=</span> <span class="n">CreditBurdenIndex</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"RepaymentCapacity"</span><span class="p">]</span> <span class="o">=</span> <span class="n">RepaymentCapacity</span>
 
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DelinquencyScore"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DelinquencyScoreLog</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"PastDueSeverity"</span><span class="p">]</span> <span class="o">=</span> <span class="n">PastDueSeverityLog</span>
-
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"AgeDelinquencyInteraction"</span><span class="p">]</span> <span class="o">=</span> <span class="n">AgeSafe</span> <span class="o">*</span> <span class="n">DelinquencyScoreLog</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"LatePaymentsPerCreditLine"</span><span class="p">]</span> <span class="o">=</span> <span class="n">TotalPastDueLog</span> <span class="o">/</span> <span class="n">CreditLinesSafe</span> 
-
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"DebtToIncome"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtToIncome</span>
+    <span class="n">df_e</span><span class="p">[</span><span class="s2">"ExposureToDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">DebtRatioSafe</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">DelinquencyScoreLog</span><span class="p">)</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"RealEstateLeveragePerAge"</span><span class="p">]</span> <span class="o">=</span>  <span class="p">(</span><span class="n">NumberRealEstateLoansOrLinesfilled</span> <span class="o">*</span> <span class="n">RevolvingUtilizationCappedLogSafe</span><span class="p">)</span> <span class="o">/</span> <span class="n">AgeSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"CreditLinesSafeAge"</span><span class="p">]</span> <span class="o">=</span>  <span class="n">CreditLinesSafe</span> <span class="o">/</span> <span class="n">AgeSafe</span>
     <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerAge"</span><span class="p">]</span> <span class="o">=</span> <span class="n">MonthlyIncomeSafe</span> <span class="o">/</span> <span class="n">AgeSafe</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"DisposableIncome"</span><span class="p">]</span> <span class="o">=</span> <span class="n">MonthlyIncomeSafe</span> <span class="o">-</span> <span class="p">(</span><span class="n">DebtRatioSafe</span> <span class="o">*</span> <span class="n">MonthlyIncomeSafe</span><span class="p">)</span>
-    <span class="n">df_e</span><span class="p">[</span><span class="s2">"IncomePerDelinquency"</span><span class="p">]</span> <span class="o">=</span> <span class="n">MonthlyIncomeSafe</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">TotalPastDueLog</span><span class="p">)</span>
 
     <span class="n">Utilization_bins</span> <span class="o">=</span> <span class="p">[</span><span class="o">-</span><span class="mf">0.01</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">1.5</span><span class="p">,</span> <span class="mi">10</span><span class="p">]</span>
     <span class="n">Utilization_labels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Very Low"</span><span class="p">,</span> <span class="s2">"Low"</span><span class="p">,</span> <span class="s2">"Moderate"</span><span class="p">,</span> <span class="s2">"High"</span><span class="p">,</span> <span class="s2">"Very High"</span><span class="p">,</span> <span class="s2">"Extreme"</span><span class="p">]</span>
@@ -7639,9 +7637,10 @@ a.anchor-link {
         <span class="s2">"AgeSafe"</span><span class="p">,</span>
         <span class="s2">"IncomePerAge"</span><span class="p">,</span>
         <span class="s2">"DebtToIncome"</span><span class="p">,</span>
-        <span class="s2">"DisposableIncome"</span><span class="p">,</span>
-        <span class="s2">"IncomePerDelinquency"</span><span class="p">,</span>
         <span class="s2">"CreditBurdenIndex"</span><span class="p">,</span>
+        <span class="s2">"AgeDelinquencyInteraction"</span><span class="p">,</span>
+        <span class="s2">"RepaymentCapacity"</span><span class="p">,</span>
+        <span class="s2">"ExposureToDelinquency"</span><span class="p">,</span>
     <span class="p">]</span>
 
     <span class="n">engineered_df</span> <span class="o">=</span> <span class="n">df_e</span><span class="p">[</span><span class="n">engineered_cols</span><span class="p">]</span>
@@ -7779,6 +7778,8 @@ a.anchor-link {
 <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/predict_nn"</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">predict_endpoint</span><span class="p">(</span><span class="n">input_data</span><span class="p">:</span> <span class="n">InputData</span><span class="p">):</span>
     <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">([</span><span class="n">input_data</span><span class="o">.</span><span class="n">data</span><span class="p">])</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">""</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">df</span><span class="o">.</span><span class="n">isna</span><span class="p">()</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"message"</span><span class="p">:</span> <span class="s2">"No input provided"</span><span class="p">}</span>
     <span class="n">probs</span><span class="p">,</span> <span class="n">preds</span> <span class="o">=</span> <span class="n">predict_nn</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
     <span class="k">return</span> <span class="p">{</span><span class="s2">"probabilities"</span><span class="p">:</span> <span class="n">probs</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="s2">"predictions"</span><span class="p">:</span> <span class="n">preds</span><span class="o">.</span><span class="n">tolist</span><span class="p">()}</span>
 
@@ -7791,6 +7792,8 @@ a.anchor-link {
 <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/predict_xgb"</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">predict_xgb_endpoint</span><span class="p">(</span><span class="n">input_data</span><span class="p">:</span> <span class="n">InputData</span><span class="p">):</span>
     <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">([</span><span class="n">input_data</span><span class="o">.</span><span class="n">data</span><span class="p">])</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">""</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">df</span><span class="o">.</span><span class="n">isna</span><span class="p">()</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"message"</span><span class="p">:</span> <span class="s2">"No input provided"</span><span class="p">}</span>
     <span class="n">probs</span><span class="p">,</span> <span class="n">preds</span> <span class="o">=</span> <span class="n">predict_xgb</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
     <span class="k">return</span> <span class="p">{</span><span class="s2">"probabilities"</span><span class="p">:</span> <span class="n">probs</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span> <span class="s2">"predictions"</span><span class="p">:</span> <span class="n">preds</span><span class="o">.</span><span class="n">tolist</span><span class="p">()}</span>
 </pre></div>

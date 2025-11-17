@@ -46,13 +46,7 @@ def engineer_features(df):
 
     NumberRealEstateLoansOrLinesfilled = df_e["NumberRealEstateLoansOrLines"].fillna(0)
 
-    NumberRealEstateLoansOrLinesSafe = NumberRealEstateLoansOrLinesfilled.replace(0, np.nan)
-
     DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
-
-    AgeRisk = np.where(AgeSafe < 25, 1.0,
-                 np.where(AgeSafe < 35, 0.8,
-                 np.where(AgeSafe < 50, 0.6, 0.4)))
 
     DelinquencyScore = (
         NumberOfTime3059DaysPastDueNotWorse +
@@ -76,23 +70,27 @@ def engineer_features(df):
         2 * DelinquencyScoreLog
     )
 
+    RepaymentCapacity = MonthlyIncomeSafe - (
+        DebtRatioSafe * MonthlyIncomeSafe + 0.5 * PastDueSeverityLog
+    )
+    
+
     df_e["DebtRatio"] = DebtRatioSafe
     df_e["MonthlyIncome"] = MonthlyIncomeSafe 
     df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
     df_e["AgeSafe"] = AgeSafe
     df_e["CreditBurdenIndex"] = CreditBurdenIndex
+    df_e["RepaymentCapacity"] = RepaymentCapacity
 
     df_e["DelinquencyScore"] = DelinquencyScoreLog
     df_e["PastDueSeverity"] = PastDueSeverityLog
-
+    df_e["AgeDelinquencyInteraction"] = AgeSafe * DelinquencyScoreLog
     df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe 
-
     df_e["DebtToIncome"] = DebtToIncome
+    df_e["ExposureToDelinquency"] = DebtRatioSafe / (1 + DelinquencyScoreLog)
     df_e["RealEstateLeveragePerAge"] =  (NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe) / AgeSafe
     df_e["CreditLinesSafeAge"] =  CreditLinesSafe / AgeSafe
     df_e["IncomePerAge"] = MonthlyIncomeSafe / AgeSafe
-    df_e["DisposableIncome"] = MonthlyIncomeSafe - (DebtRatioSafe * MonthlyIncomeSafe)
-    df_e["IncomePerDelinquency"] = MonthlyIncomeSafe / (1 + TotalPastDueLog)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -119,9 +117,10 @@ def engineer_features(df):
         "AgeSafe",
         "IncomePerAge",
         "DebtToIncome",
-        "DisposableIncome",
-        "IncomePerDelinquency",
         "CreditBurdenIndex",
+        "AgeDelinquencyInteraction",
+        "RepaymentCapacity",
+        "ExposureToDelinquency",
     ]
 
     engineered_df = df_e[engineered_cols]
@@ -259,6 +258,8 @@ def predict_nn(df: pd.DataFrame, threshold=threshold_a):
 @app.post("/predict_nn")
 def predict_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
+    if df.isna().all(axis=1).iloc[0]:
+        return {"message": "No input provided"}
     probs, preds = predict_nn(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}
 
@@ -271,5 +272,7 @@ def predict_xgb(df: pd.DataFrame, threshold=threshold_b):
 @app.post("/predict_xgb")
 def predict_xgb_endpoint(input_data: InputData):
     df = pd.DataFrame([input_data.data]).replace("", np.nan)
+    if df.isna().all(axis=1).iloc[0]:
+        return {"message": "No input provided"}
     probs, preds = predict_xgb(df)
     return {"probabilities": probs.tolist(), "predictions": preds.tolist()}

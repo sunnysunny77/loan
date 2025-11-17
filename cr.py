@@ -37,7 +37,7 @@ lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
 num_epochs = 75
-num_runs = 2
+num_runs = 1
 max_patience = 13
 
 # pd 
@@ -492,13 +492,7 @@ def engineer_features(df):
 
     NumberRealEstateLoansOrLinesfilled = df_e["NumberRealEstateLoansOrLines"].fillna(0)
 
-    NumberRealEstateLoansOrLinesSafe = NumberRealEstateLoansOrLinesfilled.replace(0, np.nan)
-
     DebtToIncome = DebtRatioSafe * MonthlyIncomeSafe
-
-    AgeRisk = np.where(AgeSafe < 25, 1.0,
-                 np.where(AgeSafe < 35, 0.8,
-                 np.where(AgeSafe < 50, 0.6, 0.4)))
 
     DelinquencyScore = (
         NumberOfTime3059DaysPastDueNotWorse +
@@ -522,23 +516,27 @@ def engineer_features(df):
         2 * DelinquencyScoreLog
     )
 
+    RepaymentCapacity = MonthlyIncomeSafe - (
+        DebtRatioSafe * MonthlyIncomeSafe + 0.5 * PastDueSeverityLog
+    )
+
+
     df_e["DebtRatio"] = DebtRatioSafe
     df_e["MonthlyIncome"] = MonthlyIncomeSafe 
     df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
     df_e["AgeSafe"] = AgeSafe
     df_e["CreditBurdenIndex"] = CreditBurdenIndex
+    df_e["RepaymentCapacity"] = RepaymentCapacity
 
     df_e["DelinquencyScore"] = DelinquencyScoreLog
     df_e["PastDueSeverity"] = PastDueSeverityLog
-
+    df_e["AgeDelinquencyInteraction"] = AgeSafe * DelinquencyScoreLog
     df_e["LatePaymentsPerCreditLine"] = TotalPastDueLog / CreditLinesSafe 
-
     df_e["DebtToIncome"] = DebtToIncome
+    df_e["ExposureToDelinquency"] = DebtRatioSafe / (1 + DelinquencyScoreLog)
     df_e["RealEstateLeveragePerAge"] =  (NumberRealEstateLoansOrLinesfilled * RevolvingUtilizationCappedLogSafe) / AgeSafe
     df_e["CreditLinesSafeAge"] =  CreditLinesSafe / AgeSafe
     df_e["IncomePerAge"] = MonthlyIncomeSafe / AgeSafe
-    df_e["DisposableIncome"] = MonthlyIncomeSafe - (DebtRatioSafe * MonthlyIncomeSafe)
-    df_e["IncomePerDelinquency"] = MonthlyIncomeSafe / (1 + TotalPastDueLog)
 
     Utilization_bins = [-0.01, 0.1, 0.3, 0.6, 0.9, 1.5, 10]
     Utilization_labels = ["Very Low", "Low", "Moderate", "High", "Very High", "Extreme"]
@@ -565,9 +563,10 @@ def engineer_features(df):
         "AgeSafe",
         "IncomePerAge",
         "DebtToIncome",
-        "DisposableIncome",
-        "IncomePerDelinquency",
         "CreditBurdenIndex",
+        "AgeDelinquencyInteraction",
+        "RepaymentCapacity",
+        "ExposureToDelinquency",
     ]
 
     engineered_df = df_e[engineered_cols]
@@ -689,7 +688,7 @@ df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
 # Feature selection
-df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=15)
+df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=16)
 
 
 # In[17]:
@@ -756,10 +755,10 @@ zero_importance_cols = [
     "WasDelinquencyScoreImputed",
     "WasPastDueSeverityImputed",
     "WasAgeSafeImputed",
-    "WasLatePaymentsPerCreditLineImputed",
     "WasUtilizationBucketLateBucketImputed",
     "WasMonthlyIncomeImputed",
-    "WasIncomePerDelinquencyImputed",
+    "WasDebtToIncomeImputed",
+    "WasAgeDelinquencyInteractionImputed",
 ]
 
 X_train = X_train.drop(columns=zero_importance_cols)
@@ -1025,7 +1024,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.67)
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.68)
 
 y_test_probs = []
 with torch.no_grad():
@@ -1065,6 +1064,7 @@ plt.show()
 # In[29]:
 
 
+# Booster
 def xgb_booster(X_train, y_train, X_val, y_val):
 
     param_dist = {
@@ -1135,7 +1135,7 @@ y_probs = model_b.get_booster().predict(dtest)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.7)
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.70)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -1209,21 +1209,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[34]:
+# In[37]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[35]:
+# In[38]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[36]:
+# In[39]:
 
 
 # Save for hosting
@@ -1240,6 +1240,12 @@ joblib.dump(cat_maps, "cat_maps.pkl")
 joblib.dump(cat_col_order, "cat_col_order.pkl")
 joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
+
+
+# In[ ]:
+
+
+
 
 
 # In[ ]:

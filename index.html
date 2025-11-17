@@ -257,6 +257,8 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const result = await response.json();
+
+        if (result.message) return  outputDiv.innerHTML = `<span style="color:gray;"> ${result.message} </span>`;
         const prediction = result.predictions[0];
         const probability = result.probabilities[0].toFixed(3);
 
