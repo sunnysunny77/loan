@@ -1,7 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[37]:
+# In[170]:
+
+
+get_ipython().system('pip install shap xgboost')
+
+
+# In[171]:
 
 
 # Imports
@@ -30,7 +36,7 @@ from sklearn.model_selection import ParameterSampler
 
 # GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+print("Using torch device:", device)
 
 device_xgb = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using xgb device:", device_xgb)
@@ -50,12 +56,12 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[38]:
+# In[172]:
 
 
-def load_datasets(base_path="./"):
+def load_datasets(base_path="/"):
 
-    files = {"train": "cs-training.csv"}
+    files = {"train": "kaggle/input/give-me-some-credit-dataset/cs-training.csv"}
     dfs = {}
 
     for key, filename in files.items():
@@ -455,7 +461,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[39]:
+# In[173]:
 
 
 def engineer_features(df):
@@ -580,7 +586,7 @@ def engineer_features(df):
     return engineered_df
 
 
-# In[40]:
+# In[174]:
 
 
 # Load datasets
@@ -588,14 +594,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[41]:
+# In[175]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[42]:
+# In[176]:
 
 
 # Outlier Handling Manual
@@ -608,7 +614,7 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_train.describe()
 
 
-# In[43]:
+# In[177]:
 
 
 # Select targets
@@ -616,14 +622,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[44]:
+# In[178]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[45]:
+# In[179]:
 
 
 # Split train/test
@@ -645,7 +651,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[46]:
+# In[180]:
 
 
 # Drop duplicates
@@ -653,48 +659,48 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[47]:
+# In[181]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[48]:
+# In[182]:
 
 
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[49]:
+# In[183]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[50]:
+# In[184]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=100)
 
 
-# In[51]:
+# In[185]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
-# In[52]:
+# In[186]:
 
 
 # Feature selection
 df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=16)
 
 
-# In[53]:
+# In[187]:
 
 
 # Impute and scale
@@ -706,7 +712,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[54]:
+# In[188]:
 
 
 # Process
@@ -743,14 +749,14 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[55]:
+# In[189]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[56]:
+# In[190]:
 
 
 # Zero importance cols entered after running
@@ -776,7 +782,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[57]:
+# In[191]:
 
 
 # Encode
@@ -818,7 +824,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[58]:
+# In[192]:
 
 
 # Cast
@@ -833,7 +839,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[59]:
+# In[193]:
 
 
 # Convert to tensors
@@ -854,7 +860,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[60]:
+# In[194]:
 
 
 # Datasets
@@ -868,7 +874,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[61]:
+# In[195]:
 
 
 # Model
@@ -918,14 +924,14 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[62]:
+# In[196]:
 
 
 # Loss
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-# In[63]:
+# In[197]:
 
 
 # Train
@@ -1011,7 +1017,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[64]:
+# In[198]:
 
 
 # Evaluation
@@ -1027,7 +1033,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
-best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.68)
+best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.70)
 
 y_test_probs = []
 with torch.no_grad():
@@ -1064,7 +1070,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[65]:
+# In[211]:
 
 
 # Booster
@@ -1083,7 +1089,7 @@ def xgb_booster(X_train, y_train, X_val, y_val):
         "reg_lambda": np.logspace(-3, 1, 6), 
     }
 
-    n_iter = 12
+    n_iter = 7
     sampler = ParameterSampler(param_dist, n_iter=n_iter, random_state=42)
 
     best_auc = -np.inf
@@ -1123,13 +1129,13 @@ def xgb_booster(X_train, y_train, X_val, y_val):
     return best_model
 
 
-# In[66]:
+# In[212]:
 
 
 model_b = xgb_booster(X_train_xgb, y_train, X_val_xgb, y_val)
 
 
-# In[67]:
+# In[213]:
 
 
 # Evaluation
@@ -1138,7 +1144,7 @@ y_probs = model_b.get_booster().predict(dtest)
 
 # Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
-best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.70)
+best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.73)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
 target_names = ['Repaid', 'Defaulted']
@@ -1165,7 +1171,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[68]:
+# In[202]:
 
 
 # Shap xgb
@@ -1182,7 +1188,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[69]:
+# In[203]:
 
 
 # Shap NN
@@ -1212,21 +1218,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[70]:
+# In[215]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[71]:
+# In[216]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[72]:
+# In[217]:
 
 
 # Save for hosting
