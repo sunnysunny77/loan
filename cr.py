@@ -32,6 +32,9 @@ from sklearn.model_selection import ParameterSampler
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
+device_xgb = "cuda" if torch.cuda.is_available() else "cpu"
+print("Using xgb device:", device_xgb)
+
 # Constants
 lr = 5e-4
 weight_decay = 1e-4
@@ -293,7 +296,7 @@ def select_features(df, target, n_to_keep=10):
         random_state=42,
         n_jobs=-1,
         tree_method="hist",
-        device="cuda",
+        device=device_xgb,
     )
 
     model.fit(X_train, y_train, verbose=False)
@@ -1098,7 +1101,7 @@ def xgb_booster(X_train, y_train, X_val, y_val):
             random_state=42,
             n_jobs=-1,
             tree_method="hist",
-            device="cuda",
+            device=device_xgb,
             early_stopping_rounds=100,
             **params
         )
@@ -1209,21 +1212,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[37]:
+# In[34]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[38]:
+# In[35]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[39]:
+# In[36]:
 
 
 # Save for hosting
@@ -1240,12 +1243,6 @@ joblib.dump(cat_maps, "cat_maps.pkl")
 joblib.dump(cat_col_order, "cat_col_order.pkl")
 joblib.dump(skewed_col_order, "skewed_col_order.pkl")
 joblib.dump(rare_maps, "rare_maps.pkl")
-
-
-# In[ ]:
-
-
-
 
 
 # In[ ]:
