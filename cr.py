@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[37]:
 
 
 # Imports
@@ -50,7 +50,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[2]:
+# In[38]:
 
 
 def load_datasets(base_path="./"):
@@ -455,7 +455,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[3]:
+# In[39]:
 
 
 def engineer_features(df):
@@ -580,7 +580,7 @@ def engineer_features(df):
     return engineered_df
 
 
-# In[4]:
+# In[40]:
 
 
 # Load datasets
@@ -588,14 +588,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[5]:
+# In[41]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[6]:
+# In[42]:
 
 
 # Outlier Handling Manual
@@ -608,7 +608,7 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_train.describe()
 
 
-# In[7]:
+# In[43]:
 
 
 # Select targets
@@ -616,14 +616,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[8]:
+# In[44]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[9]:
+# In[45]:
 
 
 # Split train/test
@@ -645,7 +645,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[10]:
+# In[46]:
 
 
 # Drop duplicates
@@ -653,48 +653,48 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[11]:
+# In[47]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[12]:
+# In[48]:
 
 
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[13]:
+# In[49]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[14]:
+# In[50]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=100)
 
 
-# In[15]:
+# In[51]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
-# In[16]:
+# In[52]:
 
 
 # Feature selection
 df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=16)
 
 
-# In[17]:
+# In[53]:
 
 
 # Impute and scale
@@ -706,7 +706,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[18]:
+# In[54]:
 
 
 # Process
@@ -743,14 +743,14 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[19]:
+# In[55]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[20]:
+# In[56]:
 
 
 # Zero importance cols entered after running
@@ -776,7 +776,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[21]:
+# In[57]:
 
 
 # Encode
@@ -818,7 +818,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[22]:
+# In[58]:
 
 
 # Cast
@@ -833,7 +833,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[23]:
+# In[59]:
 
 
 # Convert to tensors
@@ -854,7 +854,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[24]:
+# In[60]:
 
 
 # Datasets
@@ -868,7 +868,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[25]:
+# In[61]:
 
 
 # Model
@@ -918,14 +918,14 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[26]:
+# In[62]:
 
 
 # Loss
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-# In[27]:
+# In[63]:
 
 
 # Train
@@ -1011,7 +1011,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[28]:
+# In[64]:
 
 
 # Evaluation
@@ -1064,7 +1064,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[29]:
+# In[65]:
 
 
 # Booster
@@ -1072,10 +1072,10 @@ def xgb_booster(X_train, y_train, X_val, y_val):
 
     param_dist = {
         "booster": ["gbtree"],
-        "learning_rate": np.logspace(-3, -0.3, 7),   
-        "n_estimators": [300, 600, 900, 1200],
-        "max_depth": [3, 4, 5, 6, 8],
-        "min_child_weight": [1, 2, 5, 10],
+        "learning_rate": [0.003, 0.005, 0.007, 0.01, 0.02, 0.03],
+        "n_estimators":  [600, 900, 1200, 1600],
+        "max_depth": [4, 5, 6],
+        "min_child_weight": [1, 2, 5],
         "gamma": np.linspace(0, 5, 6),
         "subsample": np.linspace(0.6, 1.0, 5),
         "colsample_bytree": np.linspace(0.6, 1.0, 5),
@@ -1083,7 +1083,7 @@ def xgb_booster(X_train, y_train, X_val, y_val):
         "reg_lambda": np.logspace(-3, 1, 6), 
     }
 
-    n_iter = 10
+    n_iter = 12
     sampler = ParameterSampler(param_dist, n_iter=n_iter, random_state=42)
 
     best_auc = -np.inf
@@ -1123,13 +1123,13 @@ def xgb_booster(X_train, y_train, X_val, y_val):
     return best_model
 
 
-# In[30]:
+# In[66]:
 
 
 model_b = xgb_booster(X_train_xgb, y_train, X_val_xgb, y_val)
 
 
-# In[31]:
+# In[67]:
 
 
 # Evaluation
@@ -1165,7 +1165,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[32]:
+# In[68]:
 
 
 # Shap xgb
@@ -1182,7 +1182,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[33]:
+# In[69]:
 
 
 # Shap NN
@@ -1212,21 +1212,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[34]:
+# In[70]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[35]:
+# In[71]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[36]:
+# In[72]:
 
 
 # Save for hosting
