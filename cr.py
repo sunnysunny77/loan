@@ -42,6 +42,7 @@ device_xgb = "cuda" if torch.cuda.is_available() else "cpu"
 print("Using xgb device:", device_xgb)
 
 # Constants
+# Optimising these hyperparameters helped the model reach lower loss values and learn the most important patterns in the financial data.
 lr = 5e-4
 weight_decay = 1e-4
 batch_size = 64
@@ -464,6 +465,12 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
 # In[173]:
 
 
+# The original features are not relevant enough for a model to learn significant patterns in the data
+# Feature engineering used to expand and create new data and replace manny of the original columns entirely
+# The number of dependents also was found to have very low importance to a model's learning ability.
+# Data was inspected and found to be highly skewed, which was negatively affecting the models' performance 
+# logarithmic transformations and data clipping was used to make extreme columns normalised and take out extreme 
+# found to be errors as they were representing impossible values.
 def engineer_features(df):
 
     df_e = df.copy()
@@ -605,6 +612,7 @@ dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
 # Outlier Handling Manual
+# two major outliers were also manually removed, being an age of 0 and extreme Monthly income which was biasing predictions.
 numeric_df = df_train.select_dtypes(include=['number'])
 
 df_train = df_train[df_train['age'] > 0].reset_index(drop=True) 
@@ -637,7 +645,9 @@ X_train_full, X_test, y_train_full, y_test = train_test_split(
     df_features, target, test_size=0.2, stratify=target, random_state=42
 )
 
-# Outlier Handling 
+# Outlier Handling
+# An outlier library wa used only in the training set in order to further normalise the data and remove extreme rows. 
+# While the validation and test were left alone in order to accurately represent the real populations. 
 X_train_cut, y_train_cut = outlier_handling(
     X_train_full,
     y_train_full,
@@ -655,6 +665,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 
 
 # Drop duplicates
+# Duplicates were not removed from the test set
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
@@ -669,6 +680,8 @@ df_e = engineer_features(X_train)
 # In[182]:
 
 
+# Drop duplicates
+# Only the training set had duplicated removed after feature engineering to avoid bias in validation.
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
@@ -1033,6 +1046,7 @@ with torch.no_grad():
 
 y_val_probs = np.array(y_val_probs)
 prec, rec, thresholds = precision_recall_curve(y_val, y_val_probs)
+# Prioritise the detection of defaulting customers
 best_thresh_a = threshold_by_target_recall(y_val, y_val_probs, thresholds, 0.70)
 
 y_test_probs = []
@@ -1074,6 +1088,7 @@ plt.show()
 
 
 # Booster
+# Optimising these hyperparameters helped the model reach lower loss values and learn the most important patterns in the financial data.
 def xgb_booster(X_train, y_train, X_val, y_val):
 
     param_dist = {
@@ -1142,8 +1157,8 @@ model_b = xgb_booster(X_train_xgb, y_train, X_val_xgb, y_val)
 dtest = xgb.DMatrix(X_test_xgb)
 y_probs = model_b.get_booster().predict(dtest) 
 
-# Target defaults recall
 prec, rec, thresholds = precision_recall_curve(y_test, y_probs)
+# Prioritise the detection of defaulting customers
 best_thresh_b = threshold_by_target_recall(y_test, y_probs, thresholds, 0.73)
 y_pred = (y_probs > best_thresh_b).astype(int)
 
@@ -1169,6 +1184,16 @@ plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
+
+
+# In[ ]:
+
+
+# Using complementary types of models keeps predictions un biased 
+# and as the chosen features work with both complementary types of models. 
+# Features which did not work with both models were removed reducing noise.
+# XGBoost is strong at handling non-linear relationships and outliers 
+# while the neural network can learn deeper patterns after preprocessing.
 
 
 # In[202]:
