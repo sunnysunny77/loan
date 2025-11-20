@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="description" content="Credit Risk Prediction Form and Data" />
+  <meta name="keywords" content="AI ML Credit Risk" />
+  <meta name="author" content="D>C" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Give me some credit</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="images/pwa-logo-small.webp" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f7f9;
+    }
+
+    header {
+      background-color: #3c6464;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 23px;
+      margin: 0;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 1fr 0.5fr; 
+      margin: 40px auto auto auto; 
+      gap: 20px;
+      padding: 0 10px;
+      grid-template-areas: "input data output";
+      align-items: stretch;
+      max-width: 1600px;
+    }
+
+    .input-panel  { grid-area: input; }
+    .data-panel   { grid-area: data; }
+    .output-panel { grid-area: output; }
+
+    @media (max-width: 768px) {
+      .container {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "input"
+          "data"
+          "output";
+      }
+    }
+
+    .input-panel, .data-panel, .output-panel {
+      background-color: #ffffff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      height: 100%;
+    }
+
+    .input-panel legend, .data-panel h2, .output-panel h2 {
+      margin-top: 0;
+      color: #333;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 10px;
+      font-weight: 400;
+      font-size: 17px;
+      width: 100%;
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      padding-bottom: 20px;
+      height: 100%;
+    }
+
+    legend {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+      color: #333;
+      font-weight: 400;
+      font-size: 17px;
+      grid-column: 1 / -1;
+    }
+
+    fieldset {
+      border: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    label {
+      grid-column: 1 / 2;
+      font-weight: bold;
+      color: #333;
+      align-self: center;
+    }
+
+    input[type="number"] {
+      grid-column: 2 / 3;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    button[type="submit"] {
+      grid-column: 1 / 3;
+      padding: 12px;
+      background-color: #3c6464;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1.1em;
+      margin-top: 10px;
+      transition: background-color 0.3s;
+    }
+
+    button[type="submit"]:hover {
+      background-color: #3c5364;
+    }
+
+    .data-panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .data-panel iframe {
+      flex-grow: 1;
+      width: 100%;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      min-height: 400px; 
+    }
+
+    .output-box {
+      padding: 15px;
+      border: 2px solid #3c6464;
+      border-radius: 4px;
+      background-color: #e6f2ff;
+      font-size: 1em;
+      font-weight: bold;
+      text-align: center;
+      color: #3c6464;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Credit Risk Predictor</h1>
+  </header>
+
+  <div class="container">
+    <!-- Input -->
+    <div class="input-panel">
+      <form>
+        <legend>Enter Customer Data</legend>
+        <label for="RevolvingUtilizationOfUnsecuredLines">Revolving Utilization:</label>  
+        <input type="number" step="any" name="RevolvingUtilizationOfUnsecuredLines" id="RevolvingUtilizationOfUnsecuredLines">
+
+        <label for="age">Age:</label>
+        <input type="number" name="age" id="age">
+
+        <label for="NumberOfTime30-59DaysPastDueNotWorse">30-59 Days Past Due:</label>
+        <input type="number" name="NumberOfTime30-59DaysPastDueNotWorse" id="NumberOfTime30-59DaysPastDueNotWorse">
+
+        <label for="DebtRatio">Debt Ratio:</label>
+        <input type="number" step="any" name="DebtRatio" id="DebtRatio">
+
+        <label for="MonthlyIncome">Monthly Income:</label>
+        <input type="number" step="any" name="MonthlyIncome" id="MonthlyIncome">
+
+        <label for="NumberOfOpenCreditLinesAndLoans">Open Credit Lines:</label>
+        <input type="number" name="NumberOfOpenCreditLinesAndLoans" id="NumberOfOpenCreditLinesAndLoans">
+
+        <label for="NumberOfTimes90DaysLate">90 Days Late:</label>
+        <input type="number" name="NumberOfTimes90DaysLate" id="NumberOfTimes90DaysLate">
+
+        <label for="NumberRealEstateLoansOrLines">Real Estate Loans:</label>
+        <input type="number" name="NumberRealEstateLoansOrLines" id="NumberRealEstateLoansOrLines">
+
+        <label for="NumberOfTime60-89DaysPastDueNotWorse">60-89 Days Past Due:</label>
+        <input type="number" name="NumberOfTime60-89DaysPastDueNotWorse" id="NumberOfTime60-89DaysPastDueNotWorse">
+
+        <button type="submit">Predict Credit Risk</button>
+      </form>
+    </div>
+
+    <!-- Data -->
+    <div class="data-panel">
+      <h2>Data Context</h2>
+      <iframe
+        title="cs-training"
+        frameborder="0"
+        src="https://docs.google.com/spreadsheets/d/e/2PACX-1vTQwxsRgKJ8GI9paYyzyeQhNLhosEcWDUQzzWRgompQTRXVQDKAlfqexwOsne-SsDaRp240LYkaKlPD/pubhtml?gid=567675892&amp;single=true&amp;widget=true&amp;headers=false&amp;chrome=false&amp;range=A1:K101">
+      </iframe>
+    </div>
+
+    <!-- Output -->
+    <div class="output-panel">
+      <h2>Model Predictions</h2>
+
+      <h3>XGB</h3>
+      <div class="output-box output-xgb">
+        Awaiting input for XGB...
+      </div>
+
+      <h3>NN</h3>
+      <div class="output-box output-nn" style="margin-top: 10px;">
+        Awaiting input for NN...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const host = "https://ibyteohdear-credit.hf.space";
+    const form = document.querySelector("form");
+    const xgbDiv = document.querySelector(".output-xgb");
+    const nnDiv = document.querySelector(".output-nn");
+
+    async function sendPrediction(endpoint, outputDiv, label) {
+      outputDiv.textContent = `Calculating ${label} prediction...`;
+
+      const formData = new FormData(form);
+      const payload = { data: {} };
+
+      formData.forEach((value, key) => {
+        payload.data[key] = value === "" ? null : parseFloat(value);
+      });
+
+      try {
+        const response = await fetch(`${host}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const result = await response.json();
+
+        if (result.message) return  outputDiv.innerHTML = `<span style="color:gray;"> ${result.message} </span>`;
+        const prediction = result.predictions[0];
+        const probability = result.probabilities[0].toFixed(3);
+
+        outputDiv.innerHTML = `
+          <span style="color: ${prediction === 1 ? '#cc0000' : '#3c6464'};">
+            ${prediction === 1 ? 'High Risk (Default)' : 'Low Risk (Repay)'}
+          </span>
+          Probability: ${probability}
+        `;
+      } catch (error) {
+        console.error(`${label} Prediction failed:`, error);
+        outputDiv.innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      await Promise.all([
+        sendPrediction("predict_xgb", xgbDiv, "XGB"),
+        sendPrediction("predict_nn", nnDiv, "NN")
+      ]);
+    });
+  </script>
+</body>
+</html>

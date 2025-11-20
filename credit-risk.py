@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[170]:
+# In[74]:
 
 
+get_ipython().system('pip install --upgrade pip')
 get_ipython().system('pip install shap xgboost')
 
 
-# In[171]:
+# In[75]:
 
 
 # Imports
@@ -57,7 +58,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[172]:
+# In[76]:
 
 
 def load_datasets(base_path="/"):
@@ -462,7 +463,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[173]:
+# In[77]:
 
 
 # The original features are not relevant enough for a model to learn significant patterns in the data
@@ -536,7 +537,6 @@ def engineer_features(df):
         DebtRatioSafe * MonthlyIncomeSafe + 0.5 * PastDueSeverityLog
     )
 
-
     df_e["DebtRatio"] = DebtRatioSafe
     df_e["MonthlyIncome"] = MonthlyIncomeSafe 
     df_e["RevolvingUtilization"] = RevolvingUtilizationCappedLogSafe
@@ -593,7 +593,7 @@ def engineer_features(df):
     return engineered_df
 
 
-# In[174]:
+# In[78]:
 
 
 # Load datasets
@@ -601,14 +601,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[175]:
+# In[79]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[176]:
+# In[80]:
 
 
 # Outlier Handling Manual
@@ -622,7 +622,7 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_train.describe()
 
 
-# In[177]:
+# In[81]:
 
 
 # Select targets
@@ -630,14 +630,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[178]:
+# In[82]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[179]:
+# In[83]:
 
 
 # Split train/test
@@ -661,23 +661,23 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[180]:
+# In[84]:
 
 
 # Drop duplicates
-# Duplicates were not removed from the test set
+# Duplicates were not removed from the test set for acurate representation
 X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[181]:
+# In[85]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[182]:
+# In[86]:
 
 
 # Drop duplicates
@@ -685,35 +685,35 @@ df_e = engineer_features(X_train)
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[183]:
+# In[87]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[184]:
+# In[88]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=100)
 
 
-# In[185]:
+# In[89]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
-# In[186]:
+# In[90]:
 
 
 # Feature selection
 df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=16)
 
 
-# In[187]:
+# In[91]:
 
 
 # Impute and scale
@@ -725,7 +725,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[188]:
+# In[92]:
 
 
 # Process
@@ -762,14 +762,14 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[189]:
+# In[93]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[190]:
+# In[94]:
 
 
 # Zero importance cols entered after running
@@ -795,7 +795,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[191]:
+# In[95]:
 
 
 # Encode
@@ -837,7 +837,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[192]:
+# In[96]:
 
 
 # Cast
@@ -852,7 +852,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[193]:
+# In[97]:
 
 
 # Convert to tensors
@@ -873,7 +873,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[194]:
+# In[98]:
 
 
 # Datasets
@@ -887,12 +887,12 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[195]:
+# In[99]:
 
 
 # Model
 # The neural network is designed to be deep enough to learn complex patterns while still small enough to avoid overfitting. 
-# It includes multiple dense layers with ReLU activation functions, as well as Batch Normalisation 
+# It includes multiple dense layers with ReLU activation functions and skip links, as well as Batch Normalisation 
 # to stabilise training and improve convergence. 
 class NN(nn.Module):
     def __init__(self, input_dim): 
@@ -940,14 +940,14 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[196]:
+# In[100]:
 
 
 # Loss
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-# In[197]:
+# In[101]:
 
 
 # Train
@@ -1033,7 +1033,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[198]:
+# In[102]:
 
 
 # Evaluation
@@ -1087,7 +1087,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[211]:
+# In[103]:
 
 
 # Booster
@@ -1147,13 +1147,13 @@ def xgb_booster(X_train, y_train, X_val, y_val):
     return best_model
 
 
-# In[212]:
+# In[104]:
 
 
 model_b = xgb_booster(X_train_xgb, y_train, X_val_xgb, y_val)
 
 
-# In[213]:
+# In[105]:
 
 
 # Evaluation
@@ -1189,7 +1189,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[ ]:
+# In[106]:
 
 
 # Using complementary types of models keeps predictions un biased 
@@ -1199,7 +1199,7 @@ plt.show()
 # while the neural network can learn deeper patterns after preprocessing.
 
 
-# In[202]:
+# In[107]:
 
 
 # Shap xgb
@@ -1216,7 +1216,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[203]:
+# In[108]:
 
 
 # Shap NN
@@ -1246,21 +1246,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[215]:
+# In[109]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[216]:
+# In[110]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[217]:
+# In[111]:
 
 
 # Save for hosting
