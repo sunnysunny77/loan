@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[74]:
+# In[266]:
 
 
 get_ipython().system('pip install --upgrade pip')
 get_ipython().system('pip install shap xgboost')
 
 
-# In[75]:
+# In[267]:
 
 
 # Imports
@@ -58,7 +58,7 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', 0)
 
 
-# In[76]:
+# In[268]:
 
 
 def load_datasets(base_path="/"):
@@ -463,7 +463,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
     return thresholds[closest_idx]
 
 
-# In[77]:
+# In[269]:
 
 
 # The original features are not relevant enough for a model to learn significant patterns in the data
@@ -593,7 +593,7 @@ def engineer_features(df):
     return engineered_df
 
 
-# In[78]:
+# In[270]:
 
 
 # Load datasets
@@ -601,14 +601,14 @@ dfs = load_datasets()
 df_train = dfs["train"]
 
 
-# In[79]:
+# In[271]:
 
 
 # Summary
 dataset_summary(df_train, df_train["SeriousDlqin2yrs"])
 
 
-# In[80]:
+# In[272]:
 
 
 # Outlier Handling Manual
@@ -622,7 +622,7 @@ df_train = df_train.sort_values(by="MonthlyIncome", ascending=False).iloc[1:].re
 df_train.describe()
 
 
-# In[81]:
+# In[273]:
 
 
 # Select targets
@@ -630,14 +630,14 @@ df_features, target, feature_cols_to_drop = drop_target_and_ids(df_train)
 print(target.value_counts())
 
 
-# In[82]:
+# In[274]:
 
 
 original_cols = df_features.select_dtypes(include=['number']).columns.tolist()
 print(original_cols)
 
 
-# In[83]:
+# In[275]:
 
 
 # Split train/test
@@ -661,7 +661,7 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 
-# In[84]:
+# In[276]:
 
 
 # Drop duplicates
@@ -670,14 +670,14 @@ X_train, y_train = check_and_drop_duplicates(X_train, y_train)
 X_val, y_val = check_and_drop_duplicates(X_val, y_val)
 
 
-# In[85]:
+# In[277]:
 
 
 # Engineer_features
 df_e = engineer_features(X_train)
 
 
-# In[86]:
+# In[278]:
 
 
 # Drop duplicates
@@ -685,35 +685,35 @@ df_e = engineer_features(X_train)
 df_e, y_train = check_and_drop_duplicates(df_e, y_train)
 
 
-# In[87]:
+# In[279]:
 
 
 # Drop columns with missing
 df_drop, hm_cols_to_drop = drop_high_missing_cols(df_e, threshold=0.25)
 
 
-# In[88]:
+# In[280]:
 
 
 # Drop high card
 df_high, hc_cols_to_drop = drop_high_card_cols(df_drop, threshold=100)
 
 
-# In[89]:
+# In[281]:
 
 
 # Collapse rare categories
 df_collapsed, rare_maps = collapse_rare_categories(df_high, threshold=0.03)
 
 
-# In[90]:
+# In[282]:
 
 
 # Feature selection
 df_selected, fs_cols_to_drop = select_features(df_collapsed, y_train, n_to_keep=16)
 
 
-# In[91]:
+# In[283]:
 
 
 # Impute and scale
@@ -725,7 +725,7 @@ print(cat_col_order)
 print(cat_maps)
 
 
-# In[92]:
+# In[284]:
 
 
 # Process
@@ -762,14 +762,14 @@ X_test, X_test_flags = transform_val_test(
 )
 
 
-# In[93]:
+# In[285]:
 
 
 #summary
 dataset_summary(X_train, y_train)
 
 
-# In[94]:
+# In[286]:
 
 
 # Zero importance cols entered after running
@@ -795,7 +795,7 @@ X_test_flags = flags_to_keep
 print(X_train_flags)
 
 
-# In[95]:
+# In[287]:
 
 
 # Encode
@@ -837,7 +837,7 @@ for col in cat_col_order:
     X_test_xgb[col] = X_test[col].astype(str).map(cat_maps[col]).fillna(-1).astype(int)
 
 
-# In[96]:
+# In[288]:
 
 
 # Cast
@@ -852,7 +852,7 @@ X_val_xgb = X_val_xgb.astype(np.float32)
 X_test_xgb = X_test_xgb.astype(np.float32)
 
 
-# In[97]:
+# In[289]:
 
 
 # Convert to tensors
@@ -873,7 +873,7 @@ print("Input shape:", X_train_tensor.shape)
 print("Class weights:", class_weight_dict)
 
 
-# In[98]:
+# In[290]:
 
 
 # Datasets
@@ -887,7 +887,7 @@ test_loader = DataLoader(test_ds, batch_size=64)
 print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
-# In[99]:
+# In[291]:
 
 
 # Model
@@ -940,14 +940,14 @@ print(model)
 print("Total parameters:", sum(p.numel() for p in model.parameters()))
 
 
-# In[100]:
+# In[292]:
 
 
 # Loss
 loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-# In[101]:
+# In[293]:
 
 
 # Train
@@ -1033,7 +1033,7 @@ model.load_state_dict(overall_best_model_state)
 print(f"\nBest model across all runs restored (Val AUC = {overall_best_val_auc:.4f})")
 
 
-# In[102]:
+# In[294]:
 
 
 # Evaluation
@@ -1087,11 +1087,11 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_a:.2f})")
 plt.show()
 
 
-# In[103]:
+# In[295]:
 
 
 # Booster
-# Optimising these hyperparameters helped the model reach lower loss values and learn the most important patterns in the financial data.
+# Optimising these hyperparameters helped the model learn the most important patterns in the financial data.
 def xgb_booster(X_train, y_train, X_val, y_val):
 
     param_dist = {
@@ -1147,13 +1147,13 @@ def xgb_booster(X_train, y_train, X_val, y_val):
     return best_model
 
 
-# In[104]:
+# In[296]:
 
 
 model_b = xgb_booster(X_train_xgb, y_train, X_val_xgb, y_val)
 
 
-# In[105]:
+# In[297]:
 
 
 # Evaluation
@@ -1189,7 +1189,7 @@ plt.title(f"Confusion Matrix (Threshold = {best_thresh_b:.2f})")
 plt.show()
 
 
-# In[106]:
+# In[298]:
 
 
 # Using complementary types of models keeps predictions un biased 
@@ -1199,7 +1199,7 @@ plt.show()
 # while the neural network can learn deeper patterns after preprocessing.
 
 
-# In[107]:
+# In[299]:
 
 
 # Shap xgb
@@ -1216,7 +1216,7 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[108]:
+# In[300]:
 
 
 # Shap NN
@@ -1246,21 +1246,21 @@ print("SHAP Importance:")
 print(importance_df)
 
 
-# In[109]:
+# In[301]:
 
 
 # Save NN model
 torch.save(model.state_dict(), "cr_weights.pth")
 
 
-# In[110]:
+# In[302]:
 
 
 # Save xgb model
 model_b.save_model("cr_b.json")
 
 
-# In[111]:
+# In[303]:
 
 
 # Save for hosting
