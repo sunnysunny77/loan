@@ -469,7 +469,7 @@ def threshold_by_target_recall(y_true, y_probs, thresholds, target_recall):
 # Feature engineering used to expand and create new data and replace manny of the original columns entirely
 # The number of dependents also was found to have very low importance to a model's learning ability.
 # Data was inspected and found to be highly skewed, which was negatively affecting the models' performance 
-# logarithmic transformations and data clipping was used to make extreme columns normalised and take out extreme 
+# logarithmic transformations and data clipping was used to make extreme columns normalised and take out extremes 
 # found to be errors as they were representing impossible values.
 def engineer_features(df):
 
@@ -891,6 +891,9 @@ print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
 
 
 # Model
+# The neural network is designed to be deep enough to learn complex patterns while still small enough to avoid overfitting. 
+# It includes multiple dense layers with ReLU activation functions, as well as Batch Normalisation 
+# to stabilise training and improve convergence. 
 class NN(nn.Module):
     def __init__(self, input_dim): 
         super().__init__()

@@ -8057,7 +8057,7 @@ Using xgb device: cpu
 <span class="c1"># Feature engineering used to expand and create new data and replace manny of the original columns entirely</span>
 <span class="c1"># The number of dependents also was found to have very low importance to a model's learning ability.</span>
 <span class="c1"># Data was inspected and found to be highly skewed, which was negatively affecting the models' performance </span>
-<span class="c1"># logarithmic transformations and data clipping was used to make extreme columns normalised and take out extreme </span>
+<span class="c1"># logarithmic transformations and data clipping was used to make extreme columns normalised and take out extremes </span>
 <span class="c1"># found to be errors as they were representing impossible values.</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">engineer_features</span><span class="p">(</span><span class="n">df</span><span class="p">):</span>
     
@@ -9735,6 +9735,9 @@ Class weights: {np.int64(0): np.float64(0.5353166318719554), np.int64(1): np.flo
 <div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="cm-editor cm-s-jupyter">
 <div class="highlight hl-ipython3"><pre><span></span><span class="c1"># Model</span>
+<span class="c1"># The neural network is designed to be deep enough to learn complex patterns while still small enough to avoid overfitting. </span>
+<span class="c1"># It includes multiple dense layers with ReLU activation functions, as well as Batch Normalisation </span>
+<span class="c1"># to stabilise training and improve convergence. </span>
 <span class="k">class</span><span class="w"> </span><span class="nc">NN</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_dim</span><span class="p">):</span> 
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
